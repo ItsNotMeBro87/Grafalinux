@@ -71,9 +71,11 @@ final class Poller {
 
     static JSONObject getJson(String url, String token) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        boolean ok = false;
         try {
             c.setConnectTimeout(3000);
             c.setReadTimeout(3000);
+            c.setUseCaches(false);
             if (token != null && token.length() > 0) {
                 c.setRequestProperty("Authorization", "Bearer " + token);
             }
@@ -86,9 +88,11 @@ final class Poller {
             int n;
             while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
             r.close();
-            return new JSONObject(sb.toString());
+            JSONObject result = new JSONObject(sb.toString());
+            ok = true;
+            return result;   // connection is left open so the next poll can reuse it
         } finally {
-            c.disconnect();
+            if (!ok) c.disconnect();
         }
     }
 }

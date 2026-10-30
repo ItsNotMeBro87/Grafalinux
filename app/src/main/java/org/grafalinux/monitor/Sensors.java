@@ -12,6 +12,9 @@ import java.util.Locale;
 final class Sensors {
     private Sensors() {}
 
+    /** Set from the settings: show transfer rates in bits instead of bytes. */
+    static boolean rateBits = false;
+
     enum Unit { PERCENT, CELSIUS, MHZ, BYTES, BYTES_PS, RPM, VOLT, WATT, SECONDS, NONE }
 
     static final class Sensor {
@@ -246,7 +249,7 @@ final class Sensors {
             case BYTES:
                 return bytes(v, "");
             case BYTES_PS:
-                return bytes(v, "/s");
+                return rateBits ? bits(v * 8, "/s") : bytes(v, "/s");
             case RPM:
                 return String.format(Locale.US, "%.0f RPM", v);
             case VOLT:
@@ -265,6 +268,17 @@ final class Sensors {
         int i = 0;
         while (b >= 1024 && i < units.length - 1) {
             b /= 1024;
+            i++;
+        }
+        String f = (i == 0 || b >= 100) ? "%.0f %s%s" : "%.1f %s%s";
+        return String.format(Locale.US, f, b, units[i], suffix);
+    }
+
+    static String bits(double b, String suffix) {
+        String[] units = {"b", "Kb", "Mb", "Gb", "Tb"};
+        int i = 0;
+        while (b >= 1000 && i < units.length - 1) {
+            b /= 1000;
             i++;
         }
         String f = (i == 0 || b >= 100) ? "%.0f %s%s" : "%.1f %s%s";

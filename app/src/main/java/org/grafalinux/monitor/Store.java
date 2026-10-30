@@ -14,10 +14,13 @@ import java.util.List;
 final class Store {
     private final SharedPreferences sp;
     final Model.Settings settings = new Model.Settings();
+    final ArrayList<Model.Dashboard> dashboards = new ArrayList<Model.Dashboard>();
+    String defaultId = "";
 
     Store(Context c) {
         sp = c.getSharedPreferences("grafalinux", Context.MODE_PRIVATE);
         loadSettings();
+        loadDashboards();
     }
 
     // ---- servers ------------------------------------------------------
@@ -45,27 +48,67 @@ final class Store {
         }
     }
 
-    // ---- dashboard ----------------------------------------------------
-    Model.Dashboard dashboard() {
-        String s = sp.getString("dashboard", null);
+    // ---- dashboards ---------------------------------------------------
+    private void loadDashboards() {
+        String s = sp.getString("dashboards", null);
         if (s != null) {
             try {
-                return Model.Dashboard.fromJson(new JSONObject(s));
+                JSONArray arr = new JSONArray(s);
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject o = arr.optJSONObject(i);
+                    if (o != null) dashboards.add(Model.Dashboard.fromJson(o));
+                }
             } catch (JSONException e) {
-                // fall through to default
+                // ignore: fall back below
             }
         }
-        Model.Dashboard d = new Model.Dashboard();
-        d.fit();
-        return d;
+        if (dashboards.isEmpty()) {
+            // first run, or upgrading from the single-dashboard version
+            Model.Dashboard d = null;
+            String old = sp.getString("dashboard", null);
+            if (old != null) {
+                try {
+                    d = Model.Dashboard.fromJson(new JSONObject(old));
+                } catch (JSONException e) {
+                    d = null;
+                }
+            }
+            if (d == null) {
+                d = new Model.Dashboard();
+                d.fit();
+            }
+            dashboards.add(d);
+        }
+        defaultId = sp.getString("defaultDash", "");
+        if (find(defaultId) == null) defaultId = dashboards.get(0).id;
+        saveDashboards();
     }
 
-    void saveDashboard(Model.Dashboard d) {
+    Model.Dashboard find(String id) {
+        for (Model.Dashboard d : dashboards) {
+            if (d.id.equals(id)) return d;
+        }
+        return null;
+    }
+
+    Model.Dashboard defaultDashboard() {
+        Model.Dashboard d = find(defaultId);
+        return d != null ? d : dashboards.get(0);
+    }
+
+    void saveDashboards() {
         try {
-            sp.edit().putString("dashboard", d.toJson().toString()).apply();
+            JSONArray arr = new JSONArray();
+            for (Model.Dashboard d : dashboards) arr.put(d.toJson());
+            sp.edit().putString("dashboards", arr.toString()).putString("defaultDash", defaultId).apply();
         } catch (JSONException e) {
             // ignore
         }
+    }
+
+    /** Saves all dashboards (d is one of them). */
+    void saveDashboard(Model.Dashboard d) {
+        saveDashboards();
     }
 
     // ---- settings -----------------------------------------------------
@@ -85,6 +128,19 @@ final class Store {
         s.intervalMs = sp.getInt("intervalMs", 1000);
         s.keepOn = sp.getBoolean("keepOn", false);
         s.orientation = sp.getInt("orientation", 0);
+        s.textScale = sp.getInt("textScale", 100);
+        s.showNames = sp.getBoolean("showNames", false);
+        s.fullscreen = sp.getBoolean("fullscreen", false);
+        s.menuMode = sp.getInt("menuMode", 1);
+        s.bgMode = sp.getInt("bgMode", 0);
+        s.bgGrad1 = sp.getInt("bgGrad1", 0xFF0F2027);
+        s.bgGrad2 = sp.getInt("bgGrad2", 0xFF2C5364);
+        s.bgGrad3 = sp.getInt("bgGrad3", 0xFF203A43);
+        s.bgGrad3On = sp.getBoolean("bgGrad3On", false);
+        s.bgGradDir = sp.getInt("bgGradDir", 0);
+        s.bgDim = sp.getInt("bgDim", 30);
+        s.rateBits = sp.getBoolean("rateBits", false);
+        s.fanPercent = sp.getBoolean("fanPercent", false);
     }
 
     void saveSettings() {
@@ -104,6 +160,19 @@ final class Store {
         e.putInt("intervalMs", s.intervalMs);
         e.putBoolean("keepOn", s.keepOn);
         e.putInt("orientation", s.orientation);
+        e.putInt("textScale", s.textScale);
+        e.putBoolean("showNames", s.showNames);
+        e.putBoolean("fullscreen", s.fullscreen);
+        e.putInt("menuMode", s.menuMode);
+        e.putInt("bgMode", s.bgMode);
+        e.putInt("bgGrad1", s.bgGrad1);
+        e.putInt("bgGrad2", s.bgGrad2);
+        e.putInt("bgGrad3", s.bgGrad3);
+        e.putBoolean("bgGrad3On", s.bgGrad3On);
+        e.putInt("bgGradDir", s.bgGradDir);
+        e.putInt("bgDim", s.bgDim);
+        e.putBoolean("rateBits", s.rateBits);
+        e.putBoolean("fanPercent", s.fanPercent);
         e.apply();
     }
 }

@@ -22,11 +22,14 @@ only, e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`.
 Push this folder to a GitHub repository. The workflow in `.github/workflows/build.yml` builds
 `app-debug.apk`; download it from the run's **Artifacts** section. No Android Studio needed.
 
-## Status
+## Status (v0.3.0 Beta)
 
-Phase 1: servers (manual add), sensor browser, one dashboard with a grid, number / gauge / bar /
-line / area widgets (multi-sensor), colours, thresholds, update interval, keep-screen-on, rotation.
+* Servers (manual add / edit / remove), categorised sensor browser.
+* Several dashboards with a default; grid with padding; drag-and-drop, resize, undo/redo, lock.
+* Widgets: number, gauge, bar, line, area, donut, pie, text; multi-sensor; stacked bars and
+  concentric gauges; optional sensor names; per-widget text size.
+* Colours, threshold colours, gradient or image backgrounds, units (C/F, bytes/bits, RPM/%),
+  update interval, keep-screen-on, fullscreen, rotation.
 
-Not done yet: multiple dashboards, donut/pie, drag-and-drop, gradient/image backgrounds,
-bits/bytes and fan units, Tabler icons, secure pairing (HTTPS), automatic server discovery.
+Not done yet: server discovery, token pairing and HTTPS, Tabler icon set, desktop GUI.
 Traffic is currently plain HTTP with an optional token: use it on a trusted home network only.

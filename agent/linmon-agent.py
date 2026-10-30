@@ -628,6 +628,8 @@ setInterval(tick,1000);tick();
 def make_handler(sampler, token, verbose):
     class Handler(BaseHTTPRequestHandler):
         server_version = "linmon-agent/" + VERSION
+        protocol_version = "HTTP/1.1"   # keep-alive: the phone reuses one connection
+        timeout = 20                    # drop idle connections
 
         def log_message(self, fmt, *args):
             if verbose:

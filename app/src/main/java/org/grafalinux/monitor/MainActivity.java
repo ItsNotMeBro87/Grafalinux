@@ -1,9 +1,16 @@
 package org.grafalinux.monitor;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
+import android.util.DisplayMetrics;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -14,6 +21,12 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 
@@ -21,6 +34,7 @@ public final class MainActivity extends Activity {
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
     private static final int DRAWER_DP = 270;
+    private static final int UNDO_LIMIT = 30;
 
     Store store;
     Model.Dashboard dash;
@@ -29,12 +43,17 @@ public final class MainActivity extends Activity {
     final History hist = new History();
 
     private final Poller poller = new Poller();
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
     private FrameLayout screens;
     private final ArrayList<Screen> stack = new ArrayList<Screen>();
     private Screen home;
     private TextView status;
+    private BackgroundView bgView;
+    private Bitmap bgBmp;
     private TextView menuBtn;
+    private TextView btnUndo;
+    private TextView btnRedo;
     private LinearLayout editBar;
     private View drawer;
     private View scrim;
@@ -45,6 +64,11 @@ public final class MainActivity extends Activity {
     private float downX, downY;
     private boolean edgeTrack = false;
 
+    // undo / redo: snapshots of the dashboard layout as JSON text
+    private final ArrayList<String> undoStack = new ArrayList<String>();
+    private final ArrayList<String> redoStack = new ArrayList<String>();
+    private String lastSaved;
+
     // ------------------------------------------------------------------
     // lifecycle
     // ------------------------------------------------------------------
@@ -52,7 +76,8 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         store = new Store(this);
-        dash = store.dashboard();
+        dash = store.defaultDashboard();
+        lastSaved = snapshot();
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -68,6 +93,7 @@ public final class MainActivity extends Activity {
 
         rebuildWanted();
         updateHint();
+        updateEditBar();
         applySettings();
     }
 
@@ -75,6 +101,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updatePolling();
+        showMenuButton();
     }
 
     @Override
@@ -82,6 +109,13 @@ public final class MainActivity extends Activity {
         super.onPause();
         poller.stop();
         pollKey = "";
+        handler.removeCallbacks(hideMenu);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applyFullscreen();
     }
 
     int dp(float v) {
@@ -93,6 +127,9 @@ public final class MainActivity extends Activity {
     // ------------------------------------------------------------------
     private Screen buildHome() {
         FrameLayout f = new FrameLayout(this);
+
+        bgView = new BackgroundView(this);
+        f.addView(bgView, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         dv = new DashboardView(this);
         dv.dash = dash;
@@ -108,6 +145,11 @@ public final class MainActivity extends Activity {
             public void onLongPress() {
                 showDashMenu();
             }
+
+            @Override
+            public void onChanged() {
+                onDashChanged();
+            }
         };
 
         ScrollView sv = new ScrollView(this);
@@ -116,26 +158,30 @@ public final class MainActivity extends Activity {
         sv.addView(dv, new ViewGroup.LayoutParams(MATCH, WRAP));
         f.addView(sv, new FrameLayout.LayoutParams(MATCH, MATCH));
 
-        menuBtn = Ui.text(this, "\u2261", 24, Color.WHITE);
+        menuBtn = Ui.text(this, "\u2261", 22, Color.WHITE);
         menuBtn.setGravity(Gravity.CENTER);
-        menuBtn.setBackground(Ui.round(this, 0x66000000, 22));
+        menuBtn.setBackground(Ui.round(this, 0x66000000, 18));
         menuBtn.setOnClickListener(v -> openDrawer());
-        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.START);
-        mp.setMargins(dp(6), dp(6), 0, 0);
+        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP | Gravity.START);
+        mp.setMargins(dp(4), dp(4), 0, 0);
         f.addView(menuBtn, mp);
 
         status = Ui.text(this, "", 12, 0xFFFFB74D);
         status.setVisibility(View.GONE);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP | Gravity.START);
-        sp.setMargins(dp(56), dp(18), dp(8), 0);
+        sp.setMargins(dp(46), dp(14), dp(8), 0);
         f.addView(status, sp);
 
         editBar = Ui.hbox(this);
         editBar.setBackgroundColor(0xF01C1C1E);
-        editBar.setPadding(dp(8), dp(6), dp(8), dp(6));
-        editBar.addView(editButton("Done", v -> setEditing(false)));
-        editBar.addView(editButton("+ Widget", v -> addWidget()));
+        editBar.setPadding(dp(6), dp(6), dp(6), dp(6));
+        btnUndo = editButton("Undo", v -> undo());
+        btnRedo = editButton("Redo", v -> redo());
+        editBar.addView(btnUndo);
+        editBar.addView(btnRedo);
+        editBar.addView(editButton("+ Add", v -> addWidget()));
         editBar.addView(editButton("Grid", v -> push(Screens.dashboardSettings(this))));
+        editBar.addView(editButton("Done", v -> setEditing(false)));
         editBar.setVisibility(View.GONE);
         f.addView(editBar, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP));
 
@@ -151,30 +197,77 @@ public final class MainActivity extends Activity {
 
     private TextView editButton(String label, View.OnClickListener l) {
         TextView t = Ui.button(this, label, l);
+        t.setTextSize(13);
+        t.setPadding(dp(4), dp(10), dp(4), dp(10));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, WRAP, 1);
-        p.setMargins(dp(4), 0, dp(4), 0);
+        p.setMargins(dp(3), 0, dp(3), 0);
         t.setLayoutParams(p);
         return t;
     }
 
+    private void updateEditBar() {
+        btnUndo.setAlpha(undoStack.isEmpty() ? 0.35f : 1f);
+        btnRedo.setAlpha(redoStack.isEmpty() ? 0.35f : 1f);
+    }
+
     private void showDashMenu() {
-        final boolean ed = dv.editing;
-        String[] items = {ed ? "Done editing" : "Edit dashboard", "Add widget", "Dashboard settings"};
-        Ui.dialog(this).setItems(items, (dlg, which) -> {
-            if (which == 0) setEditing(!ed);
-            else if (which == 1) addWidget();
-            else push(Screens.dashboardSettings(this));
+        final ArrayList<String> items = new ArrayList<String>();
+        final ArrayList<Integer> codes = new ArrayList<Integer>();
+        if (dash.locked) {
+            items.add("Unlock dashboard");
+            codes.add(1);
+        } else {
+            items.add(dv.editing ? "Done editing" : "Edit dashboard");
+            codes.add(0);
+            items.add("Add widget");
+            codes.add(2);
+            items.add("Dashboard settings");
+            codes.add(3);
+            items.add("Lock dashboard");
+            codes.add(1);
+        }
+        items.add("Open menu");
+        codes.add(4);
+        Ui.dialog(this).setItems(items.toArray(new String[0]), (dlg, which) -> {
+            switch (codes.get(which)) {
+                case 0:
+                    setEditing(!dv.editing);
+                    break;
+                case 1:
+                    toggleLock();
+                    break;
+                case 2:
+                    addWidget();
+                    break;
+                case 3:
+                    push(Screens.dashboardSettings(this));
+                    break;
+                default:
+                    openDrawer();
+                    break;
+            }
         }).show();
     }
 
+    private void toggleLock() {
+        dash.locked = !dash.locked;
+        if (dash.locked) setEditing(false);
+        store.saveDashboard(dash);
+        dv.relayout();
+        Ui.toast(this, dash.locked ? "Dashboard locked" : "Dashboard unlocked");
+    }
+
     private void setEditing(boolean e) {
+        if (e && dash.locked) return;
         dv.editing = e;
         editBar.setVisibility(e ? View.VISIBLE : View.GONE);
-        menuBtn.setVisibility(e ? View.GONE : View.VISIBLE);
-        dv.invalidate();
+        updateEditBar();
+        dv.relayout();
+        showMenuButton();
     }
 
     private void addWidget() {
+        if (dash.locked) return;
         Model.Widget w = new Model.Widget();
         w.type = Model.GAUGE;
         w.w = Math.min(2, dash.cols);
@@ -209,7 +302,35 @@ public final class MainActivity extends Activity {
     }
 
     // ------------------------------------------------------------------
-    // dashboard bookkeeping
+    // menu button: auto-hides so it does not cover your graphs
+    // ------------------------------------------------------------------
+    private final Runnable hideMenu = new Runnable() {
+        @Override
+        public void run() {
+            menuBtn.animate().alpha(0f).setDuration(400).withEndAction(new Runnable() {
+                @Override
+                public void run() {
+                    menuBtn.setVisibility(View.INVISIBLE);
+                }
+            }).start();
+        }
+    };
+
+    void showMenuButton() {
+        handler.removeCallbacks(hideMenu);
+        menuBtn.animate().cancel();
+        int mode = store.settings.menuMode;
+        if (dv.editing || mode == 2) {
+            menuBtn.setVisibility(View.GONE);
+            return;
+        }
+        menuBtn.setAlpha(0.7f);
+        menuBtn.setVisibility(View.VISIBLE);
+        if (mode == 1) handler.postDelayed(hideMenu, 3500);
+    }
+
+    // ------------------------------------------------------------------
+    // dashboard bookkeeping and undo / redo
     // ------------------------------------------------------------------
     Model.Server serverById(String id) {
         for (Model.Server s : store.servers()) {
@@ -236,6 +357,62 @@ public final class MainActivity extends Activity {
         dv.invalidate();
     }
 
+    /** Layout and widgets as text (the data source and lock state are deliberately left out). */
+    private String snapshot() {
+        try {
+            JSONObject o = dash.toJson();
+            o.remove("serverId");
+            o.remove("locked");
+            return o.toString();
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    private void trackUndo() {
+        String now = snapshot();
+        if (now == null || now.equals(lastSaved)) return;
+        if (lastSaved != null) {
+            undoStack.add(lastSaved);
+            if (undoStack.size() > UNDO_LIMIT) undoStack.remove(0);
+        }
+        redoStack.clear();
+        lastSaved = now;
+        updateEditBar();
+    }
+
+    private void restore(String json) {
+        try {
+            dash.copyFrom(Model.Dashboard.fromJson(new JSONObject(json)));
+        } catch (JSONException e) {
+            return;
+        }
+        dash.fit();
+        rebuildWanted();
+        updateHint();
+        store.saveDashboard(dash);
+        dv.relayout();
+        updatePolling();
+        lastSaved = snapshot();
+        updateEditBar();
+    }
+
+    private void undo() {
+        if (undoStack.isEmpty()) return;
+        String cur = snapshot();
+        String prev = undoStack.remove(undoStack.size() - 1);
+        if (cur != null) redoStack.add(cur);
+        restore(prev);
+    }
+
+    private void redo() {
+        if (redoStack.isEmpty()) return;
+        String cur = snapshot();
+        String next = redoStack.remove(redoStack.size() - 1);
+        if (cur != null) undoStack.add(cur);
+        restore(next);
+    }
+
     /** Call after anything about the dashboard changed. */
     void onDashChanged() {
         dash.fit();
@@ -244,6 +421,7 @@ public final class MainActivity extends Activity {
         store.saveDashboard(dash);
         dv.relayout();
         updatePolling();
+        trackUndo();
     }
 
     void applySettings() {
@@ -257,8 +435,151 @@ public final class MainActivity extends Activity {
         if (s.orientation == 1) o = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
         else if (s.orientation == 2) o = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
         setRequestedOrientation(o);
+        applyFullscreen();
+        showMenuButton();
+        Sensors.rateBits = s.rateBits;
+        if (s.bgMode == 2) {
+            if (bgBmp == null) loadBgBitmap();
+        } else {
+            bgBmp = null;
+        }
+        applyBackground();
         dv.invalidate();
         updatePolling();
+    }
+
+    private void applyFullscreen() {
+        View decor = getWindow().getDecorView();
+        if (store.settings.fullscreen) {
+            decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        } else {
+            decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // several dashboards
+    // ------------------------------------------------------------------
+    void switchDashboard(Model.Dashboard d) {
+        if (d == null) return;
+        setEditing(false);
+        dash = d;
+        dv.dash = d;
+        undoStack.clear();
+        redoStack.clear();
+        lastSaved = snapshot();
+        updateEditBar();
+        rebuildWanted();
+        updateHint();
+        dv.relayout();
+        updatePolling();
+    }
+
+    void openHome() {
+        closeDrawer();
+        while (stack.size() > 1) pop();
+    }
+
+    // ------------------------------------------------------------------
+    // background image (scaled to the screen size when imported, to save memory)
+    // ------------------------------------------------------------------
+    private static final int REQ_BG = 42;
+
+    void applyBackground() {
+        bgView.apply(store.settings, bgBmp);
+    }
+
+    private void loadBgBitmap() {
+        bgBmp = null;
+        File f = new File(getFilesDir(), "bg.jpg");
+        if (!f.exists()) return;
+        try {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inPreferredConfig = Bitmap.Config.RGB_565;
+            bgBmp = BitmapFactory.decodeFile(f.getPath(), o);
+        } catch (Throwable t) {
+            bgBmp = null;
+        }
+    }
+
+    void pickBackgroundImage() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        startActivityForResult(Intent.createChooser(i, "Choose a background image"), REQ_BG);
+    }
+
+    void removeBackgroundImage() {
+        new File(getFilesDir(), "bg.jpg").delete();
+        bgBmp = null;
+        if (store.settings.bgMode == 2) store.settings.bgMode = 0;
+        store.saveSettings();
+        applyBackground();
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_BG && res == RESULT_OK && data != null && data.getData() != null) {
+            importBackground(data.getData());
+        }
+    }
+
+    private void importBackground(final Uri uri) {
+        Ui.toast(this, "Loading image…");
+        new Thread(() -> {
+            boolean ok = false;
+            try {
+                DisplayMetrics dm = getResources().getDisplayMetrics();
+                int target = Math.max(dm.widthPixels, dm.heightPixels);
+                BitmapFactory.Options o = new BitmapFactory.Options();
+                o.inJustDecodeBounds = true;
+                InputStream in = getContentResolver().openInputStream(uri);
+                BitmapFactory.decodeStream(in, null, o);
+                in.close();
+                int sample = 1;
+                while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= target) sample *= 2;
+                o.inJustDecodeBounds = false;
+                o.inSampleSize = sample;
+                o.inPreferredConfig = Bitmap.Config.RGB_565;
+                in = getContentResolver().openInputStream(uri);
+                Bitmap bmp = BitmapFactory.decodeStream(in, null, o);
+                in.close();
+                if (bmp != null) {
+                    int mx = Math.max(bmp.getWidth(), bmp.getHeight());
+                    if (mx > target) {
+                        float k = (float) target / mx;
+                        Bitmap sc = Bitmap.createScaledBitmap(bmp, Math.round(bmp.getWidth() * k),
+                                Math.round(bmp.getHeight() * k), true);
+                        if (sc != bmp) bmp.recycle();
+                        bmp = sc;
+                    }
+                    FileOutputStream out = new FileOutputStream(new File(getFilesDir(), "bg.jpg"));
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 90, out);
+                    out.close();
+                    bmp.recycle();
+                    ok = true;
+                }
+            } catch (Throwable t) {
+                ok = false;
+            }
+            final boolean fok = ok;
+            runOnUiThread(() -> {
+                if (fok) {
+                    store.settings.bgMode = 2;
+                    store.saveSettings();
+                    loadBgBitmap();
+                    applyBackground();
+                    Ui.toast(this, "Background image set");
+                } else {
+                    Ui.toast(this, "Could not load that image");
+                }
+            });
+        }).start();
     }
 
     // ------------------------------------------------------------------
@@ -324,6 +645,7 @@ public final class MainActivity extends Activity {
         stack.get(stack.size() - 1).root.setVisibility(View.VISIBLE);
         updateHint();
         updatePolling();
+        if (stack.size() == 1) showMenuButton();
     }
 
     private void navigate(Screen s) {
@@ -356,9 +678,7 @@ public final class MainActivity extends Activity {
         root.addView(scrim, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         LinearLayout d = Ui.vbox(this);
-        d.setBackgroundColor(0xFF111113);
-        d.setPadding(0, dp(28), 0, 0);
-        d.setClickable(true);
+        d.setPadding(0, dp(28), 0, dp(16));
         TextView t = Ui.text(this, "Grafalinux", 22, Color.WHITE);
         t.setPadding(dp(20), dp(8), dp(20), dp(2));
         d.addView(t);
@@ -370,11 +690,16 @@ public final class MainActivity extends Activity {
             while (stack.size() > 1) pop();
         });
         addMenuItem(d, "Servers", () -> navigate(Screens.servers(this)));
-        addMenuItem(d, "Dashboards", () -> navigate(Screens.dashboardSettings(this)));
+        addMenuItem(d, "Dashboards", () -> navigate(Screens.dashboards(this)));
         addMenuItem(d, "Settings", () -> navigate(Screens.settings(this)));
         addMenuItem(d, "Credits", () -> navigate(Screens.credits(this)));
 
-        drawer = d;
+        // scrollable, so every entry stays reachable in landscape
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(0xFF111113);
+        sv.setClickable(true);
+        sv.addView(d, new ViewGroup.LayoutParams(MATCH, WRAP));
+        drawer = sv;
         drawer.setVisibility(View.GONE);
         root.addView(drawer, new FrameLayout.LayoutParams(dp(DRAWER_DP), MATCH));
     }
@@ -417,6 +742,7 @@ public final class MainActivity extends Activity {
                 edgeTrack = !drawerOpen && e.getX() < dp(24);
                 downX = e.getX();
                 downY = e.getY();
+                if (store.settings.menuMode == 1 && stack.size() == 1) showMenuButton();
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (edgeTrack) {

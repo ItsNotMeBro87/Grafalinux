@@ -10,6 +10,7 @@ import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -93,7 +94,7 @@ final class Screens {
                 });
                 Ui.add(body, card, 8);
             }
-            Ui.add(body, Ui.button(a, "+ Add server", v -> addServerDialog(a, refresh[0])), 16);
+            Ui.add(body, Ui.button(a, "+ Add server", v -> serverDialog(a, null, refresh[0])), 16);
             body.addView(Ui.text(a, "Tap a server to see its sensors. Long-press to remove it "
                     + "or use it for the dashboard.", 12, Ui.SUB));
         };
@@ -103,8 +104,10 @@ final class Screens {
 
     private static void serverMenu(final MainActivity a, final Model.Server s, final Runnable done) {
         Ui.dialog(a).setTitle(s.name)
-                .setItems(new CharSequence[]{"Use for the dashboard", "Remove"}, (dlg, which) -> {
+                .setItems(new CharSequence[]{"Edit", "Use for the dashboard", "Remove"}, (dlg, which) -> {
                     if (which == 0) {
+                        serverDialog(a, s, done);
+                    } else if (which == 1) {
                         a.dash.serverId = s.id;
                         a.onDashChanged();
                         done.run();
@@ -130,33 +133,45 @@ final class Screens {
 
     private static void saveServer(MainActivity a, Model.Server s) {
         List<Model.Server> list = a.store.servers();
-        list.add(s);
+        boolean found = false;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).id.equals(s.id)) {
+                list.set(i, s);
+                found = true;
+            }
+        }
+        if (!found) list.add(s);
         a.store.saveServers(list);
         if (a.dash.serverId.length() == 0) {
             a.dash.serverId = s.id;
             a.onDashChanged();
         }
+        a.updatePolling();
     }
 
-    private static void addServerDialog(final MainActivity a, final Runnable done) {
+    private static void serverDialog(final MainActivity a, final Model.Server existing, final Runnable done) {
         LinearLayout box = Ui.vbox(a);
         box.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
-        final EditText name = Ui.edit(a, "Name (e.g. my PC)", "", InputType.TYPE_CLASS_TEXT);
-        final EditText host = Ui.edit(a, "IP address or hostname", "",
+        final EditText name = Ui.edit(a, "Name (e.g. my PC)", existing == null ? "" : existing.name,
+                InputType.TYPE_CLASS_TEXT);
+        final EditText host = Ui.edit(a, "IP address or hostname", existing == null ? "" : existing.host,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        final EditText port = Ui.edit(a, "Port", "8787", InputType.TYPE_CLASS_NUMBER);
-        final EditText token = Ui.edit(a, "Token (if the agent uses one)", "", InputType.TYPE_CLASS_TEXT);
+        final EditText port = Ui.edit(a, "Port", existing == null ? "8787" : String.valueOf(existing.port),
+                InputType.TYPE_CLASS_NUMBER);
+        final EditText token = Ui.edit(a, "Token (if the agent uses one)", existing == null ? "" : existing.token,
+                InputType.TYPE_CLASS_TEXT);
         box.addView(name);
         box.addView(host);
         box.addView(port);
         box.addView(token);
 
-        final AlertDialog dlg = Ui.dialog(a).setTitle("Add server").setView(box)
+        final AlertDialog dlg = Ui.dialog(a).setTitle(existing == null ? "Add server" : "Edit server").setView(box)
                 .setPositiveButton("Test & save", null)
                 .setNegativeButton("Cancel", null).create();
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             final Model.Server s = new Model.Server();
+            if (existing != null) s.id = existing.id;
             s.host = host.getText().toString().trim();
             s.name = name.getText().toString().trim();
             s.token = token.getText().toString().trim();
@@ -354,8 +369,71 @@ final class Screens {
                     col -> { st.fontColor = col; changed(a); }));
             body.addView(Ui.colorRow(a, "Label colour", st.labelColor, Model.WHITE,
                     col -> { st.labelColor = col; changed(a); }));
-            body.addView(Ui.colorRow(a, "Background colour", st.bgColor, Model.BLACK,
-                    col -> { st.bgColor = col; changed(a); }));
+
+            body.addView(Ui.header(a, "Background"));
+            body.addView(labeled(a, "Type", choice(a, "Background type",
+                    new String[]{"Solid colour", "Gradient", "Image from this phone"}, st.bgMode,
+                    which -> {
+                        st.bgMode = which;
+                        a.store.saveSettings();
+                        a.applySettings();
+                        build[0].run();
+                    })));
+            if (st.bgMode == 0) {
+                body.addView(Ui.colorRow(a, "Background colour", st.bgColor, Model.BLACK,
+                        col -> { st.bgColor = col; bgChanged(a); }));
+            } else if (st.bgMode == 1) {
+                body.addView(Ui.colorRow(a, "First colour", st.bgGrad1, 0xFF0F2027,
+                        col -> { st.bgGrad1 = col; bgChanged(a); }));
+                body.addView(Ui.colorRow(a, "Second colour", st.bgGrad2, 0xFF2C5364,
+                        col -> { st.bgGrad2 = col; bgChanged(a); }));
+                body.addView(check(a, "Use a third colour", st.bgGrad3On, (btn, on) -> {
+                    st.bgGrad3On = on;
+                    bgChanged(a);
+                    build[0].run();
+                }));
+                if (st.bgGrad3On) {
+                    body.addView(Ui.colorRow(a, "Third colour", st.bgGrad3, 0xFF203A43,
+                            col -> { st.bgGrad3 = col; bgChanged(a); }));
+                }
+                body.addView(labeled(a, "Direction", choice(a, "Gradient direction",
+                        new String[]{"Top to bottom", "Left to right", "Diagonal"}, st.bgGradDir,
+                        which -> { st.bgGradDir = which; bgChanged(a); })));
+            } else {
+                Ui.add(body, Ui.button(a, "Choose image\u2026", v -> a.pickBackgroundImage()), 6);
+                Ui.add(body, Ui.button(a, "Remove image", v -> {
+                    a.removeBackgroundImage();
+                    build[0].run();
+                }), 6);
+                body.addView(Ui.text(a, "Darken the image (keeps widgets readable)", 15, Ui.TEXT));
+                final TextView dsv = Ui.text(a, st.bgDim + "%", 14, Ui.SUB);
+                SeekBar dsb = new SeekBar(a);
+                dsb.setMax(8);
+                dsb.setProgress(Math.max(0, Math.min(8, st.bgDim / 10)));
+                dsb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                    @Override
+                    public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                        st.bgDim = p * 10;
+                        dsv.setText(st.bgDim + "%");
+                        a.applyBackground();
+                    }
+
+                    @Override
+                    public void onStartTrackingTouch(SeekBar s) {
+                    }
+
+                    @Override
+                    public void onStopTrackingTouch(SeekBar s) {
+                        a.store.saveSettings();
+                    }
+                });
+                LinearLayout dr = Ui.hbox(a);
+                dr.addView(dsb, new LinearLayout.LayoutParams(0, Ui.WRAP, 1));
+                dr.addView(dsv, new LinearLayout.LayoutParams(Ui.dp(a, 56), Ui.WRAP));
+                body.addView(dr);
+                body.addView(Ui.text(a, "The image is scaled to your screen size when you pick it, "
+                        + "to keep memory use low.", 12, Ui.SUB));
+            }
 
             body.addView(Ui.header(a, "Threshold colours"));
             body.addView(check(a, "Colour values when they pass a threshold", st.thEnabled,
@@ -379,10 +457,49 @@ final class Screens {
             body.addView(Ui.text(a, "Thresholds only change the colour of values; they are guides "
                     + "and can be turned off above.", 12, Ui.SUB));
 
+            body.addView(Ui.header(a, "Text"));
+            body.addView(Ui.text(a, "Label and value text size", 15, Ui.TEXT));
+            final TextView tsv = Ui.text(a, st.textScale + "%", 14, Ui.SUB);
+            SeekBar tsb = new SeekBar(a);
+            tsb.setMax(10);
+            tsb.setProgress(Math.max(0, Math.min(10, (st.textScale - 60) / 10)));
+            tsb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                    st.textScale = 60 + p * 10;
+                    tsv.setText(st.textScale + "%");
+                    a.dv.invalidate();
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar s) {
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar s) {
+                    a.store.saveSettings();
+                }
+            });
+            LinearLayout tr = Ui.hbox(a);
+            tr.addView(tsb, new LinearLayout.LayoutParams(0, Ui.WRAP, 1));
+            tr.addView(tsv, new LinearLayout.LayoutParams(Ui.dp(a, 56), Ui.WRAP));
+            body.addView(tr);
+            body.addView(check(a, "Show sensor names on widgets (labels you type always show)", st.showNames,
+                    (btn, on) -> { st.showNames = on; changed(a); }));
+            body.addView(Ui.text(a, "Each widget can override both settings.", 12, Ui.SUB));
+
             body.addView(Ui.header(a, "Units"));
             body.addView(labeled(a, "Temperature", choice(a, "Temperature unit",
                     new String[]{"Celsius (\u00B0C)", "Fahrenheit (\u00B0F)"}, st.tempF ? 1 : 0,
                     which -> { st.tempF = which == 1; changed(a); build[0].run(); })));
+            body.addView(labeled(a, "Network & disk speed", choice(a, "Network and disk speed",
+                    new String[]{"Bytes (KB/s, MB/s)", "Bits (Kb/s, Mb/s)"}, st.rateBits ? 1 : 0,
+                    which -> { st.rateBits = which == 1; Sensors.rateBits = st.rateBits; changed(a); })));
+            body.addView(labeled(a, "Fan speed", choice(a, "Fan speed",
+                    new String[]{"RPM", "Percentage"}, st.fanPercent ? 1 : 0,
+                    which -> { st.fanPercent = which == 1; changed(a); })));
+            body.addView(Ui.text(a, "Fan percentage = RPM divided by the sensor's maximum "
+                    + "(default 3000). Set the real maximum per sensor in the widget editor.", 12, Ui.SUB));
 
             body.addView(Ui.header(a, "Update interval"));
             final TextView iv = Ui.text(a, "", 14, Ui.SUB);
@@ -414,6 +531,20 @@ final class Screens {
             body.addView(Ui.text(a, "Longer intervals use less battery and CPU on the phone.", 12, Ui.SUB));
 
             body.addView(Ui.header(a, "Screen"));
+            body.addView(check(a, "Fullscreen (hide the status and navigation bars)", st.fullscreen, (btn, on) -> {
+                st.fullscreen = on;
+                a.store.saveSettings();
+                a.applySettings();
+            }));
+            body.addView(labeled(a, "Menu button", choice(a, "Menu button",
+                    new String[]{"Always visible", "Auto-hide", "Hidden"}, st.menuMode,
+                    which -> {
+                        st.menuMode = which;
+                        a.store.saveSettings();
+                        a.applySettings();
+                    })));
+            body.addView(Ui.text(a, "The menu always opens with a swipe from the left edge, "
+                    + "or from the long-press menu.", 12, Ui.SUB));
             body.addView(check(a, "Keep the screen on", st.keepOn, (btn, on) -> {
                 st.keepOn = on;
                 a.store.saveSettings();
@@ -476,12 +607,145 @@ final class Screens {
     // ------------------------------------------------------------------
     // Credits
     // ------------------------------------------------------------------
+    private static void bgChanged(MainActivity a) {
+        a.store.saveSettings();
+        a.applyBackground();
+    }
+
+    // ------------------------------------------------------------------
+    // Dashboards list
+    // ------------------------------------------------------------------
+    static Screen dashboards(final MainActivity a) {
+        final Screen sc = new Screen();
+        final LinearLayout body = Ui.vbox(a);
+        sc.root = Ui.scaffold(a, "Dashboards", v -> a.pop(), body);
+        final Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> {
+            body.removeAllViews();
+            for (final Model.Dashboard d : a.store.dashboards) {
+                LinearLayout card = Ui.card(a);
+                boolean isDef = d.id.equals(a.store.defaultId);
+                card.addView(Ui.text(a, d.name + (isDef ? "   (default)" : ""), 16, Ui.TEXT));
+                Model.Server srv = a.serverById(d.serverId);
+                card.addView(Ui.text(a, (srv == null ? "no server" : srv.name) + "   \u2022 "
+                        + d.widgets.size() + " widgets" + (d == a.dash ? "   \u2022 open now" : ""), 12, Ui.SUB));
+                card.setOnClickListener(v -> {
+                    a.switchDashboard(d);
+                    a.openHome();
+                });
+                card.setOnLongClickListener(v -> {
+                    dashboardMenu(a, d, refresh[0]);
+                    return true;
+                });
+                Ui.add(body, card, 8);
+            }
+            Ui.add(body, Ui.button(a, "+ New dashboard", v -> newDashboardDialog(a)), 16);
+            body.addView(Ui.text(a, "Tap to open. Long-press to set the default, rename, duplicate or "
+                    + "delete. The default dashboard opens when the app starts.", 12, Ui.SUB));
+        };
+        refresh[0].run();
+        return sc;
+    }
+
+    private static void dashboardMenu(final MainActivity a, final Model.Dashboard d, final Runnable done) {
+        Ui.dialog(a).setTitle(d.name)
+                .setItems(new CharSequence[]{"Open", "Set as default", "Rename", "Duplicate", "Delete"},
+                        (dlg, which) -> {
+                            switch (which) {
+                                case 0:
+                                    a.switchDashboard(d);
+                                    a.openHome();
+                                    break;
+                                case 1:
+                                    a.store.defaultId = d.id;
+                                    a.store.saveDashboards();
+                                    done.run();
+                                    break;
+                                case 2:
+                                    renameDashboard(a, d, done);
+                                    break;
+                                case 3:
+                                    duplicateDashboard(a, d);
+                                    done.run();
+                                    break;
+                                default:
+                                    deleteDashboard(a, d, done);
+                                    break;
+                            }
+                        }).show();
+    }
+
+    private static void renameDashboard(final MainActivity a, final Model.Dashboard d, final Runnable done) {
+        final EditText name = Ui.edit(a, "Dashboard name", d.name, InputType.TYPE_CLASS_TEXT);
+        LinearLayout box = Ui.vbox(a);
+        box.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        box.addView(name);
+        Ui.dialog(a).setTitle("Rename dashboard").setView(box)
+                .setPositiveButton("OK", (dlg, which) -> {
+                    String n = name.getText().toString().trim();
+                    if (n.length() > 0) d.name = n;
+                    a.store.saveDashboards();
+                    done.run();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private static void duplicateDashboard(MainActivity a, Model.Dashboard d) {
+        try {
+            Model.Dashboard cp = Model.Dashboard.fromJson(d.toJson());
+            cp.id = Model.newId();
+            cp.name = d.name + " copy";
+            int i = a.store.dashboards.indexOf(d);
+            a.store.dashboards.add(i + 1, cp);
+            a.store.saveDashboards();
+        } catch (JSONException e) {
+            Ui.toast(a, "Could not duplicate");
+        }
+    }
+
+    private static void deleteDashboard(final MainActivity a, final Model.Dashboard d, final Runnable done) {
+        if (a.store.dashboards.size() <= 1) {
+            Ui.toast(a, "Keep at least one dashboard");
+            return;
+        }
+        Ui.dialog(a).setTitle("Delete \"" + d.name + "\"?")
+                .setPositiveButton("Delete", (dlg, which) -> {
+                    a.store.dashboards.remove(d);
+                    if (d.id.equals(a.store.defaultId)) a.store.defaultId = a.store.dashboards.get(0).id;
+                    a.store.saveDashboards();
+                    if (d == a.dash) a.switchDashboard(a.store.defaultDashboard());
+                    done.run();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private static void newDashboardDialog(final MainActivity a) {
+        final EditText name = Ui.edit(a, "Dashboard name",
+                "Dashboard " + (a.store.dashboards.size() + 1), InputType.TYPE_CLASS_TEXT);
+        LinearLayout box = Ui.vbox(a);
+        box.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        box.addView(name);
+        Ui.dialog(a).setTitle("New dashboard").setView(box)
+                .setPositiveButton("Create", (dlg, which) -> {
+                    Model.Dashboard nd = new Model.Dashboard();
+                    String n = name.getText().toString().trim();
+                    if (n.length() > 0) nd.name = n;
+                    nd.serverId = a.dash.serverId;
+                    nd.fit();
+                    a.store.dashboards.add(nd);
+                    a.store.saveDashboards();
+                    a.switchDashboard(nd);
+                    a.openHome();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
     static Screen credits(final MainActivity a) {
         final Screen sc = new Screen();
         LinearLayout body = Ui.vbox(a);
         sc.root = Ui.scaffold(a, "Credits", v -> a.pop(), body);
         body.addView(Ui.text(a, "Grafalinux System Monitor", 22, Ui.TEXT));
-        Ui.add(body, Ui.text(a, "Version: v0.1.0 Beta", 15, Ui.SUB), 6);
+        Ui.add(body, Ui.text(a, "Version: v0.3.0 Beta", 15, Ui.SUB), 6);
         Ui.add(body, Ui.text(a, "Author: ItsNotMeBro87 and Claude", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "License: GPLv3", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "This program is free software: you can redistribute it and/or modify it "
@@ -518,8 +782,20 @@ final class Screens {
         final EditText title = Ui.edit(a, "Title (optional)", w.title, InputType.TYPE_CLASS_TEXT);
         Ui.onText(title, s -> w.title = s);
         Ui.add(body, title, 4);
+        final EditText textField = Ui.edit(a, "Text (for Text widgets)", w.text,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        textField.setSingleLine(false);
+        textField.setMinLines(2);
+        Ui.onText(textField, s -> w.text = s);
+        Ui.add(body, textField, 4);
         body.addView(labeled(a, "Text alignment", choice(a, "Text alignment", Model.ALIGN_NAMES, w.align,
                 which -> w.align = which)));
+        body.addView(labeled(a, "Sensor names", choice(a, "Sensor names", Model.NAME_MODE_NAMES, w.nameMode,
+                which -> w.nameMode = which)));
+        body.addView(labeled(a, "Text size", choice(a, "Text size", Model.TEXT_SIZE_NAMES, w.textSize,
+                which -> w.textSize = which)));
+        body.addView(check(a, "Stacked (bars touch with text inside; gauges become concentric rings)",
+                w.stacked, (btn, on) -> w.stacked = on));
         body.addView(Ui.colorRow(a, "Title colour", w.titleColor != 0 ? w.titleColor : st.fontColor,
                 st.fontColor, col -> w.titleColor = (col == st.fontColor) ? 0 : col));
 
@@ -529,13 +805,13 @@ final class Screens {
             public int max() { return Math.max(0, a.dash.cols - w.w); }
             public int get() { return w.x; }
             public void set(int v) { w.x = v; }
-        }));
+        }, 1));
         body.addView(Ui.stepper(a, "Row", new Ui.Range() {
             public int min() { return 0; }
             public int max() { return Math.max(0, Model.MAX_ROWS - w.h); }
             public int get() { return w.y; }
             public void set(int v) { w.y = v; }
-        }));
+        }, 1));
         body.addView(Ui.stepper(a, "Width", new Ui.Range() {
             public int min() { return 1; }
             public int max() { return Math.max(1, a.dash.cols - w.x); }

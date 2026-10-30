@@ -14,9 +14,12 @@ final class Model {
     static final int WHITE = 0xFFFFFFFF;
     static final int BLACK = 0xFF000000;
 
-    static final int NUMBER = 0, GAUGE = 1, BAR = 2, LINE = 3, AREA = 4;
-    static final String[] TYPE_NAMES = {"Number", "Gauge", "Bar", "Line graph", "Area graph"};
+    static final int NUMBER = 0, GAUGE = 1, BAR = 2, LINE = 3, AREA = 4, DONUT = 5, PIE = 6, TEXT = 7;
+    static final String[] TYPE_NAMES = {"Number", "Gauge", "Bar", "Line graph", "Area graph",
+            "Donut", "Pie", "Text"};
     static final String[] ALIGN_NAMES = {"Left", "Center", "Right"};
+    static final String[] NAME_MODE_NAMES = {"Follow global setting", "Show sensor names", "Hide sensor names"};
+    static final String[] TEXT_SIZE_NAMES = {"Follow global setting", "Small", "Normal", "Large", "Extra large"};
 
     static final int MAX_COLS = 12;
     static final int MAX_ROWS = 50;
@@ -113,6 +116,10 @@ final class Model {
         int x = 0, y = 0, w = 2, h = 2;
         int align = 1;              // 0 left, 1 center, 2 right
         int titleColor = 0;         // 0 = use the global font colour
+        int nameMode = 0;           // 0 follow global, 1 show sensor names, 2 hide them
+        int textSize = 0;           // 0 follow global, 1 small, 2 normal, 3 large, 4 extra large
+        boolean stacked = false;    // stacked bars / concentric gauges
+        String text = "";           // content of a Text widget
         ArrayList<Series> series = new ArrayList<Series>();
 
         JSONObject toJson() throws JSONException {
@@ -126,6 +133,10 @@ final class Model {
             o.put("h", h);
             o.put("align", align);
             o.put("titleColor", titleColor);
+            o.put("nameMode", nameMode);
+            o.put("textSize", textSize);
+            o.put("stacked", stacked);
+            o.put("text", text);
             JSONArray arr = new JSONArray();
             for (Series s : series) arr.put(s.toJson());
             o.put("series", arr);
@@ -143,6 +154,10 @@ final class Model {
             w.h = o.optInt("h", 2);
             w.align = o.optInt("align", 1);
             w.titleColor = o.optInt("titleColor", 0);
+            w.nameMode = o.optInt("nameMode", 0);
+            w.textSize = o.optInt("textSize", 0);
+            w.stacked = o.optBoolean("stacked", false);
+            w.text = o.optString("text", "");
             JSONArray arr = o.optJSONArray("series");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -156,13 +171,25 @@ final class Model {
 
     // ------------------------------------------------------------------
     static final class Dashboard {
+        String id = newId();
         String name = "Main";
         String serverId = "";
         int cols = 5;
         int rows = 4;
         int gap = 6;                    // dp
         boolean outerPadding = true;
+        boolean locked = false;
         ArrayList<Widget> widgets = new ArrayList<Widget>();
+
+        /** Copies layout and widgets (not the data source or lock state) from another dashboard. */
+        void copyFrom(Dashboard o) {
+            name = o.name;
+            cols = o.cols;
+            rows = o.rows;
+            gap = o.gap;
+            outerPadding = o.outerPadding;
+            widgets = o.widgets;
+        }
 
         /** Keep every widget inside the grid and make sure the grid has enough rows. */
         void fit() {
@@ -185,12 +212,14 @@ final class Model {
 
         JSONObject toJson() throws JSONException {
             JSONObject o = new JSONObject();
+            o.put("id", id);
             o.put("name", name);
             o.put("serverId", serverId);
             o.put("cols", cols);
             o.put("rows", rows);
             o.put("gap", gap);
             o.put("outerPadding", outerPadding);
+            o.put("locked", locked);
             JSONArray arr = new JSONArray();
             for (Widget w : widgets) arr.put(w.toJson());
             o.put("widgets", arr);
@@ -199,12 +228,14 @@ final class Model {
 
         static Dashboard fromJson(JSONObject o) {
             Dashboard d = new Dashboard();
+            d.id = o.optString("id", newId());
             d.name = o.optString("name", "Main");
             d.serverId = o.optString("serverId", "");
             d.cols = o.optInt("cols", 5);
             d.rows = o.optInt("rows", 4);
             d.gap = o.optInt("gap", 6);
             d.outerPadding = o.optBoolean("outerPadding", true);
+            d.locked = o.optBoolean("locked", false);
             JSONArray arr = o.optJSONArray("widgets");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -233,6 +264,19 @@ final class Model {
         int intervalMs = 1000;
         boolean keepOn = false;
         int orientation = 0;            // 0 auto, 1 portrait, 2 landscape
+        int textScale = 100;            // percent, 60-160
+        boolean showNames = false;      // show automatic sensor names on widgets
+        boolean fullscreen = false;
+        int menuMode = 1;               // 0 always visible, 1 auto-hide, 2 hidden
+        int bgMode = 0;                 // 0 solid, 1 gradient, 2 image
+        int bgGrad1 = 0xFF0F2027;
+        int bgGrad2 = 0xFF2C5364;
+        int bgGrad3 = 0xFF203A43;
+        boolean bgGrad3On = false;
+        int bgGradDir = 0;              // 0 top to bottom, 1 left to right, 2 diagonal
+        int bgDim = 30;                 // percent, darkens a background image
+        boolean rateBits = false;       // show network / disk speeds in bits
+        boolean fanPercent = false;     // show fan speed as a percentage of the sensor maximum
 
         Settings() {
             resetThresholds();

@@ -288,19 +288,24 @@ final class Ui {
 
     /** "label   [-]  value  [+]" row. */
     static View stepper(final Context c, String label, final Range r) {
+        return stepper(c, label, r, 0);
+    }
+
+    /** Same, but shows value + offset (used to display 1-based rows and columns). */
+    static View stepper(final Context c, String label, final Range r, final int offset) {
         LinearLayout row = hbox(c);
         row.setPadding(0, dp(c, 4), 0, dp(c, 4));
         row.addView(text(c, label, 15, TEXT), new LinearLayout.LayoutParams(0, WRAP, 1));
-        final TextView val = text(c, String.valueOf(r.get()), 16, TEXT);
+        final TextView val = text(c, String.valueOf(r.get() + offset), 16, TEXT);
         val.setGravity(Gravity.CENTER);
         val.setMinWidth(dp(c, 48));
         TextView minus = button(c, "\u2212", v -> {
             r.set(Math.max(r.min(), r.get() - 1));
-            val.setText(String.valueOf(r.get()));
+            val.setText(String.valueOf(r.get() + offset));
         });
         TextView plus = button(c, "+", v -> {
             r.set(Math.min(r.max(), r.get() + 1));
-            val.setText(String.valueOf(r.get()));
+            val.setText(String.valueOf(r.get() + offset));
         });
         row.addView(minus, new LinearLayout.LayoutParams(dp(c, 44), dp(c, 40)));
         row.addView(val);
