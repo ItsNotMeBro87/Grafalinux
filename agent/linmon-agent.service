@@ -1,0 +1,18 @@
+[Unit]
+Description=linmon agent (system stats for the phone app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/linmon/linmon-agent.py --port 8787
+# Optional settings, one per line, e.g.  LINMON_TOKEN=your-secret
+EnvironmentFile=-/etc/linmon.env
+DynamicUser=yes
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

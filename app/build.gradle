@@ -1,0 +1,21 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.grafalinux.monitor'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'org.grafalinux.monitor'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0-beta'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
