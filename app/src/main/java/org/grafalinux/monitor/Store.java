@@ -147,6 +147,7 @@ final class Store {
         s.thGradient = sp.getBoolean("thGradient", false);
         s.wakeMode = sp.getInt("wakeMode", 0);
         s.wakeInterval = sp.getInt("wakeInterval", 30);
+        s.panelStyle = sp.getInt("panelStyle", 1);
     }
 
     void saveSettings() {
@@ -185,6 +186,7 @@ final class Store {
         e.putBoolean("thGradient", s.thGradient);
         e.putInt("wakeMode", s.wakeMode);
         e.putInt("wakeInterval", s.wakeInterval);
+        e.putInt("panelStyle", s.panelStyle);
         e.apply();
     }
 }

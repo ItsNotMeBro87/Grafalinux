@@ -22,7 +22,7 @@ only, e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`.
 Push this folder to a GitHub repository. The workflow in `.github/workflows/build.yml` builds
 `app-debug.apk`; download it from the run's **Artifacts** section. No Android Studio needed.
 
-## Status (v0.3.2 Beta)
+## Status (v0.3.3 Beta)
 
 * Servers (manual add / edit / remove), categorised sensor browser, this phone's battery.
 * Several dashboards with a default; grid with padding; drag-and-drop, resize, undo/redo, lock.
@@ -30,8 +30,11 @@ Push this folder to a GitHub repository. The workflow in `.github/workflows/buil
   (digital or analog); icons; stacked bars and rings; title above, floating or hidden.
 * Colour wheel, threshold colours (optionally gradual), gradient or image backgrounds,
   units (C/F, bytes/bits, RPM/%), fans convertible between % and RPM, fullscreen, rotation.
+* Panel styles: Grafana (default) or soft cards, set globally and overridable per widget. Grafana:
+  panel header, number with sparkline, gauge with threshold bands and min / max labels, gradient /
+  LCD / solid bars, smooth graphs with axis labels and a legend table (last, max).
 * Experimental: wake the screen when USB power connects, or by checking the PC every few seconds.
 
 Requires Android 5.0 or newer. Not done yet: server discovery, token pairing and HTTPS,
-Grafana-style panels (planned), desktop GUI. Traffic is plain HTTP with an optional token:
+desktop GUI. Traffic is plain HTTP with an optional token:
 use it on a trusted home network only.

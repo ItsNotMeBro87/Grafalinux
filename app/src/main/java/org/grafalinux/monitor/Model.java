@@ -28,6 +28,9 @@ final class Model {
     }
     static final String[] ALIGN_NAMES = {"Left", "Center", "Right"};
     static final String[] NAME_MODE_NAMES = {"Follow global setting", "Show sensor names", "Hide sensor names"};
+    static final String[] STYLE_NAMES = {"Follow global setting", "Soft card", "Grafana"};
+    static final String[] PANEL_NAMES = {"Soft cards", "Grafana"};
+    static final String[] BAR_STYLE_NAMES = {"Gradient bar", "LCD blocks", "Solid bar"};
     static final String[] TEXT_SIZE_NAMES = {"Follow global setting", "Small", "Normal", "Large", "Extra large"};
 
     static final int MAX_COLS = 12;
@@ -144,6 +147,11 @@ final class Model {
         boolean clockSeconds = false;
         boolean clockDate = true;
         String clockFormat = "EEE, d MMM yyyy";
+        int style = 0;              // 0 follow global panel style, 1 soft card, 2 Grafana
+        int barStyle = 0;           // Grafana bars: 0 gradient, 1 LCD blocks, 2 solid
+        boolean sparkline = true;   // Grafana number: sparkline behind the value
+        boolean bands = true;       // Grafana gauge: threshold bands around the arc
+        boolean legendTable = true; // Grafana line / area graphs: legend table (last, max)
         ArrayList<Series> series = new ArrayList<Series>();
 
         JSONObject toJson() throws JSONException {
@@ -170,6 +178,11 @@ final class Model {
             o.put("clockSeconds", clockSeconds);
             o.put("clockDate", clockDate);
             o.put("clockFormat", clockFormat);
+            o.put("style", style);
+            o.put("barStyle", barStyle);
+            o.put("sparkline", sparkline);
+            o.put("bands", bands);
+            o.put("legendTable", legendTable);
             JSONArray arr = new JSONArray();
             for (Series s : series) arr.put(s.toJson());
             o.put("series", arr);
@@ -200,6 +213,11 @@ final class Model {
             w.clockSeconds = o.optBoolean("clockSeconds", false);
             w.clockDate = o.optBoolean("clockDate", true);
             w.clockFormat = o.optString("clockFormat", "EEE, d MMM yyyy");
+            w.style = o.optInt("style", 0);
+            w.barStyle = o.optInt("barStyle", 0);
+            w.sparkline = o.optBoolean("sparkline", true);
+            w.bands = o.optBoolean("bands", true);
+            w.legendTable = o.optBoolean("legendTable", true);
             if (w.type == PIE) {            // pies are now donuts with full thickness
                 w.type = DONUT;
                 w.ringThick = 3;
@@ -329,6 +347,7 @@ final class Model {
         boolean thGradient = false;     // fade gradually towards the warning / critical colours
         int wakeMode = 0;               // experimental: 0 off, 1 when USB power connects, 2 check the PC
         int wakeInterval = 30;          // seconds between checks (mode 2)
+        int panelStyle = 1;             // default look of widgets: 0 soft cards, 1 Grafana
 
         Settings() {
             resetThresholds();

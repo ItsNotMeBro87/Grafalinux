@@ -3,9 +3,11 @@ package org.grafalinux.monitor;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.view.GestureDetector;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -402,15 +404,20 @@ final class DashboardView extends View {
     /** Value and unit as two strings. */
     private String[] parts(Model.Series s, Sensors.Sensor sn) {
         if (sn == null) return new String[]{"--", ""};
+        return partsAt(s, sn, sn.value);
+    }
+
+    /** Same as parts(), for any value of the sensor (used for the "max" column of a legend table). */
+    private String[] partsAt(Model.Series s, Sensors.Sensor sn, double v) {
         if (sn.fan) {
             int mode = s.fanMode == 0 ? (st.fanPercent ? 1 : 2) : s.fanMode;
             if (mode == 2) {
-                double rpm = fanRpm(s, sn, sn.value);
+                double rpm = fanRpm(s, sn, v);
                 if (!Double.isNaN(rpm)) return new String[]{String.format(Locale.US, "%.0f", rpm), "RPM"};
             }
-            return new String[]{String.format(Locale.US, "%.0f", fanPct(s, sn, sn.value)), "%"};
+            return new String[]{String.format(Locale.US, "%.0f", fanPct(s, sn, v)), "%"};
         }
-        return Sensors.formatParts(sn.unit, sn.value, st.tempF);
+        return Sensors.formatParts(sn.unit, v, st.tempF);
     }
 
     private static String join(String[] p) {
@@ -461,23 +468,27 @@ final class DashboardView extends View {
     }
 
     private int colorFor(Model.Series s, Sensors.Sensor sn) {
+        return colorAt(s.color, sn, sn != null ? sn.value : 0);
+    }
+
+    /** The colour for value v of sensor sn: base, or a warning / critical colour past a threshold. */
+    private int colorAt(int base, Sensors.Sensor sn, double v) {
         if (st.thEnabled && sn != null) {
             int i = Model.thIndex(sn.thKey);
             if (i >= 0) {
                 float warn = st.thWarn[i];
                 float crit = Math.max(st.thCrit[i], warn + 1);
-                double v = sn.value;
                 if (v >= crit) return st.critColor;
                 if (v >= warn) {
                     return st.thGradient ? lerp(st.warnColor, st.critColor, (v - warn) / (crit - warn)) : st.warnColor;
                 }
                 if (st.thGradient) {
                     float start = warn * 0.75f;
-                    if (v > start) return lerp(s.color, st.warnColor, (v - start) / (warn - start));
+                    if (v > start) return lerp(base, st.warnColor, (v - start) / (warn - start));
                 }
             }
         }
-        return s.color;
+        return base;
     }
 
     /** Draws s inside [l, r], shrinking the text to fit; align 0 = left, 1 = centre, 2 = right. */
@@ -649,24 +660,39 @@ final class DashboardView extends View {
     }
 
     private void drawWidget(Canvas c, Model.Widget w, RectF r) {
+        boolean g = grafana(w);
         float ts = tscale(w);
-        float cr = w.rounded ? 10 * d : 0;
+        float cr = w.rounded ? (g ? 4 * d : 10 * d) : 0;
         fill.setStyle(Paint.Style.FILL);
-        fill.setColor(0x14FFFFFF);
+        fill.setColor(g ? G_PANEL : 0x14FFFFFF);
         c.drawRoundRect(r, cr, cr, fill);
+        if (g) {
+            stroke.setStrokeWidth(d);
+            stroke.setColor(G_BORDER);
+            c.drawRoundRect(r, cr, cr, stroke);
+        }
         if (editing) {
             stroke.setStrokeWidth(1.5f * d);
             stroke.setColor(0xAA4FC3F7);
             c.drawRoundRect(r, cr, cr, stroke);
         }
         float ip = st.innerPad * d;
+        if (g) ip = Math.max(ip, 7 * d);
         float l = r.left + ip, t = r.top + ip, rr = r.right - ip, b = r.bottom - ip;
         if (rr - l < 4 || b - t < 4) return;
         float top0 = t;
 
         boolean hasTitle = w.title.length() > 0 && w.titlePos != 2;
         boolean floating = hasTitle && w.titlePos == 1;
-        if (hasTitle && w.titlePos == 0) {
+        if (hasTitle && w.titlePos == 0 && g) {
+            // Grafana panel header: small title at the top-left
+            float tsz = size(12 * d, (b - t) * 0.18f, ts);
+            textP.setColor(w.titleColor != 0 ? w.titleColor : G_TITLE);
+            textP.setFakeBoldText(false);
+            drawText(c, w.title, l, rr, t + tsz, 0, tsz);
+            t += tsz * 1.6f;
+            if (b - t < 4) return;
+        } else if (hasTitle && w.titlePos == 0) {
             // title above the graph: it never covers anything (the graph gets the rest of the box)
             float tsz = size(13 * d, (b - t) * 0.2f, ts);
             textP.setColor(w.titleColor != 0 ? w.titleColor : st.fontColor);
@@ -687,16 +713,20 @@ final class DashboardView extends View {
         } else {
             switch (w.type) {
                 case Model.NUMBER:
-                    drawNumber(c, w, l, t, rr, b);
+                    if (g) drawStat(c, w, l, t, rr, b);
+                    else drawNumber(c, w, l, t, rr, b);
                     break;
                 case Model.BAR:
-                    drawBars(c, w, l, t, rr, b);
+                    if (g) drawGBars(c, w, l, t, rr, b);
+                    else drawBars(c, w, l, t, rr, b);
                     break;
                 case Model.LINE:
-                    drawChart(c, w, l, t, rr, b, false);
+                    if (g) drawGChart(c, w, l, t, rr, b, false);
+                    else drawChart(c, w, l, t, rr, b, false);
                     break;
                 case Model.AREA:
-                    drawChart(c, w, l, t, rr, b, true);
+                    if (g) drawGChart(c, w, l, t, rr, b, true);
+                    else drawChart(c, w, l, t, rr, b, true);
                     break;
                 case Model.DONUT:
                     drawDonut(c, w, l, t, rr, b);
@@ -850,6 +880,7 @@ final class DashboardView extends View {
             drawRings(c, w, l, t, r, b, 135, 270);
             return;
         }
+        boolean g = grafana(w);
         float ts = tscale(w);
         int cols = n <= 3 ? n : (int) Math.ceil(Math.sqrt(n));
         int rows = (n + cols - 1) / cols;
@@ -860,7 +891,8 @@ final class DashboardView extends View {
             float cl = l + (i % cols) * cw;
             float ct = t + (i / cols) * ch;
             float dia = Math.max(8 * d, Math.min(cw, ch));
-            drawSingleRing(c, w, s, sensor(s), cl + cw / 2f, ct + ch / 2f, dia, 135, 270, ts);
+            if (g) drawGGauge(c, w, s, i, sensor(s), cl + cw / 2f, ct + ch / 2f, dia, ts);
+            else drawSingleRing(c, w, s, sensor(s), cl + cw / 2f, ct + ch / 2f, dia, 135, 270, ts);
         }
     }
 
@@ -1368,6 +1400,563 @@ final class DashboardView extends View {
             }
             textP.setColor(st.labelColor);
             drawText(c, txt, mx, x1 - 4 * d, b - chH / 2f + ls * 0.35f, 0, ls);
+        }
+    }
+
+    // ==================================================================
+    // Grafana style
+    // ==================================================================
+    private static final int G_PANEL = 0xE6181B1F;
+    private static final int G_BORDER = 0xFF2C3037;
+    private static final int G_TRACK = 0xFF262A30;
+    private static final int G_LCD_OFF = 0xFF24282E;
+    private static final int G_TITLE = 0xFFD8D9DA;
+    private static final int G_DIM = 0xFF8E8E99;
+    /** Grafana's classic colours: used instead of white (the untouched default series colour). */
+    private static final int[] GPAL = {0xFF73BF69, 0xFF5794F2, 0xFFFF9830, 0xFFF2CC0C, 0xFFB877D9, 0xFF8AB8FF};
+
+    private final float[] fr = new float[2];
+    private final float[] px = new float[History.N];
+    private final float[] py = new float[History.N];
+
+    private boolean grafana(Model.Widget w) {
+        return w.style == 0 ? st.panelStyle == 1 : w.style == 2;
+    }
+
+    private static int gcol(Model.Series s, int i) {
+        return s.color == Model.WHITE ? GPAL[i % GPAL.length] : s.color;
+    }
+
+    private static float cl(float v, float lo, float hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    /** Warning / critical positions (0..1) inside the series range; false when there are no thresholds. */
+    private boolean thFracs(Model.Series s, Sensors.Sensor sn, float[] out) {
+        if (!st.thEnabled || sn == null || sn.fan) return false;
+        int i = Model.thIndex(sn.thKey);
+        if (i < 0) return false;
+        double[] r = range(s, sn);
+        double mn = r[0];
+        double span = r[1] - r[0];
+        float warn = st.thWarn[i];
+        float crit = Math.max(st.thCrit[i], warn + 1);
+        out[0] = (float) Math.max(0, Math.min(1, (warn - mn) / span));
+        out[1] = (float) Math.max(0, Math.min(1, (crit - mn) / span));
+        return true;
+    }
+
+    /** Colour at position pos (0..1) along a bar: base, then warning, then critical. */
+    private int gradColor(int base, boolean th, float[] f, float pos) {
+        if (!th) return lerp(lerp(base, Model.BLACK, 0.4), base, pos);
+        float p1 = cl(f[0], 0.02f, 0.98f);
+        float p2 = cl(f[1], p1 + 0.01f, 1f);
+        if (pos <= p1) return lerp(base, st.warnColor, pos / p1);
+        if (pos <= p2) return lerp(st.warnColor, st.critColor, (pos - p1) / (p2 - p1));
+        return st.critColor;
+    }
+
+    private Shader gradShader(int base, boolean th, float[] f, float x0, float y0, float x1, float y1) {
+        if (!th) {
+            return new LinearGradient(x0, y0, x1, y1, lerp(base, Model.BLACK, 0.4), base, Shader.TileMode.CLAMP);
+        }
+        float p1 = cl(f[0], 0.02f, 0.98f);
+        float p2 = cl(f[1], p1 + 0.01f, 1f);
+        return new LinearGradient(x0, y0, x1, y1, new int[]{base, st.warnColor, st.critColor},
+                new float[]{0f, p1, p2}, Shader.TileMode.CLAMP);
+    }
+
+    /** Smooth curve through the first n points of px / py. */
+    private void smooth(Path p, int n) {
+        p.reset();
+        p.moveTo(px[0], py[0]);
+        for (int i = 1; i < n; i++) {
+            p.quadTo(px[i - 1], py[i - 1], (px[i - 1] + px[i]) / 2f, (py[i - 1] + py[i]) / 2f);
+        }
+        p.lineTo(px[n - 1], py[n - 1]);
+    }
+
+    // ---- stat panel: big number with a sparkline behind it ----
+    private void drawStat(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+        int n = w.series.size();
+        float ts = tscale(w);
+        boolean lbl = anyLabel(w) || anyIcon(w);
+        float band = (b - t) / n;
+        for (int i = 0; i < n; i++) {
+            Model.Series s = w.series.get(i);
+            Sensors.Sensor sn = sensor(s);
+            float top = t + i * band;
+            float bot = top + band - (i < n - 1 ? 3 * d : 0);
+            int col = colorAt(gcol(s, i), sn, sn != null ? sn.value : 0);
+            if (w.sparkline) drawSpark(c, s, l, top + (bot - top) * 0.4f, r, bot, col);
+            float h = bot - top;
+            float ls = size(12 * d, h * 0.2f, ts);
+            float vs = size(46 * d, h * (lbl ? 0.5f : 0.62f), ts);
+            if (lbl) {
+                drawIconLabel(c, iconName(s, sn), labelFor(w, s, sn), l, r, top + ls * 1.2f, w.align, ls);
+                float rest = h - ls * 1.6f;
+                drawParts(c, parts(s, sn), l, r, top + ls * 1.6f + rest * 0.42f + vs * 0.35f, w.align, vs, col, true);
+            } else {
+                drawParts(c, parts(s, sn), l, r, top + h * 0.45f + vs * 0.35f, w.align, vs, col, true);
+            }
+        }
+    }
+
+    private void drawSpark(Canvas c, Model.Series s, float l, float t, float r, float b, int col) {
+        History.Ring ring = hist.ring(s.sensorId);
+        if (ring == null || ring.count < 2 || b - t < 6 * d) return;
+        float mn = ring.get(0), mx = mn;
+        for (int k = 1; k < ring.count; k++) {
+            float v = ring.get(k);
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        float span = mx - mn;
+        if (span < 1e-6f) {
+            mn -= 1;
+            span = 2;
+        } else {
+            mn -= span * 0.08f;
+            span *= 1.16f;
+        }
+        int n = ring.count;
+        for (int k = 0; k < n; k++) {
+            px[k] = l + (r - l) * k / (float) (n - 1);
+            py[k] = b - 1.5f * d - (ring.get(k) - mn) / span * (b - t - 1.5f * d);
+        }
+        smooth(path, n);
+        path2.reset();
+        path2.addPath(path);
+        path2.lineTo(px[n - 1], b);
+        path2.lineTo(px[0], b);
+        path2.close();
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor((col & 0x00FFFFFF) | 0x38000000);
+        c.drawPath(path2, fill);
+        stroke.setStrokeWidth(1.4f * d);
+        stroke.setStrokeJoin(Paint.Join.ROUND);
+        stroke.setColor((col & 0x00FFFFFF) | 0xB0000000);
+        c.drawPath(path, stroke);
+    }
+
+    // ---- gauge with threshold bands ----
+    private void drawGGauge(Canvas c, Model.Widget w, Model.Series s, int idx, Sensors.Sensor sn, float cx,
+                            float cy, float dia, float ts) {
+        int base = gcol(s, idx);
+        int vcol = colorAt(base, sn, sn != null ? sn.value : 0);
+        boolean bands = w.bands && thFracs(s, sn, fr);
+        float rad = dia / 2f;
+        float bw = bands ? Math.max(2 * d, dia * 0.035f) : 0;
+        float sw = Math.max(3 * d, dia * 0.10f);
+        float start = 135, sweep = 270;
+        float f0 = fr[0], f1 = fr[1];
+        if (bands) {
+            float rb = rad - bw / 2f;
+            tmp.set(cx - rb, cy - rb, cx + rb, cy + rb);
+            stroke.setStrokeWidth(bw);
+            stroke.setStrokeCap(Paint.Cap.BUTT);
+            stroke.setColor(base);
+            if (f0 > 0.003f) c.drawArc(tmp, start, sweep * f0, false, stroke);
+            stroke.setColor(st.warnColor);
+            if (f1 - f0 > 0.003f) c.drawArc(tmp, start + sweep * f0, sweep * (f1 - f0), false, stroke);
+            stroke.setColor(st.critColor);
+            if (1 - f1 > 0.003f) c.drawArc(tmp, start + sweep * f1, sweep * (1 - f1), false, stroke);
+        }
+        float rv = rad - (bands ? bw + dia * 0.03f : 0) - sw / 2f;
+        if (rv < sw) return;
+        tmp.set(cx - rv, cy - rv, cx + rv, cy + rv);
+        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+        stroke.setStrokeWidth(sw);
+        stroke.setStrokeCap(cap);
+        stroke.setColor(G_TRACK);
+        c.drawArc(tmp, start, sweep, false, stroke);
+        float f = fraction(s, sn);
+        if (f > 0.005f) {
+            stroke.setColor(vcol);
+            c.drawArc(tmp, start, sweep * f, false, stroke);
+        }
+        stroke.setStrokeCap(Paint.Cap.BUTT);
+
+        // value, icon and label inside
+        float ri = rv - sw / 2f;
+        float inner = ri * 2f;
+        if (inner < 10 * d) return;
+        String ic = iconName(s, sn);
+        String lab = labelFor(w, s, sn);
+        float vs = size(inner * 0.38f, inner * 0.44f, ts);
+        float is = vs * 0.6f;
+        float cyv = cy - dia * 0.02f;
+        if (ic != null && ri > 22 * d) {
+            Icons.draw(c, ic, cx - is / 2f, cyv - vs * 0.55f - is * 1.1f, is, st.iconColor);
+        }
+        drawParts(c, parts(s, sn), cx - inner * 0.46f, cx + inner * 0.46f, cyv + vs * 0.35f, 1, vs, vcol, true);
+        if (dia >= 70 * d && sn != null) {
+            double[] rg2 = range(s, sn);
+            double lo = sn.fan ? 0 : rg2[0];
+            double hi = sn.fan ? 100 : rg2[1];
+            float ms = size(rad * 0.13f, rad * 0.17f, ts);
+            float ex = rv * 0.7071f;
+            float my = cy + ex + sw / 2f + ms * 1.15f;
+            textP.setColor(G_DIM);
+            drawText(c, axisText(sn, lo), cx - ex - ms * 1.8f, cx - ex + ms * 1.8f, my, 1, ms);
+            drawText(c, axisText(sn, hi), cx + ex - ms * 1.8f, cx + ex + ms * 1.8f, my, 1, ms);
+        }
+        if (lab.length() > 0) {
+            textP.setColor(st.labelColor);
+            float lsz = size(rad * 0.2f, rad * 0.24f, ts);
+            drawText(c, lab, cx - rad * 0.3f, cx + rad * 0.3f, cy + rv * 0.82f, 1, lsz);
+        }
+    }
+
+    /** Axis number without clutter: no unit for percent and temperature. */
+    private String axisText(Sensors.Sensor sn, double v) {
+        if (sn.fan) return String.format(Locale.US, "%.0f", v);
+        String[] p = Sensors.formatParts(sn.unit, v, st.tempF);
+        if (sn.unit == Sensors.Unit.PERCENT || sn.unit == Sensors.Unit.CELSIUS) return p[0];
+        return join(p);
+    }
+
+    // ---- bar gauge: gradient bars or LCD blocks ----
+    private void drawGBars(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+        int n = w.series.size();
+        float ts = tscale(w);
+        boolean vert = w.vertical;
+        float gapPx = 4 * d;
+        float avail = vert ? (r - l) : (b - t);
+        float bs = Math.max(4 * d, (avail - gapPx * (n - 1)) / n);
+        float tsz = size(12 * d, bs * 0.7f, ts);
+        boolean texts = tsz >= 6 * d;
+
+        if (!vert) {
+            float lw = 0, vw = 0;
+            if (texts) {
+                for (int i = 0; i < n; i++) {
+                    Model.Series s = w.series.get(i);
+                    Sensors.Sensor sn = sensor(s);
+                    String lab = labelFor(w, s, sn);
+                    boolean ic = iconName(s, sn) != null;
+                    textP.setFakeBoldText(false);
+                    textP.setTextSize(tsz);
+                    float lwi = (lab.length() > 0 ? textP.measureText(lab) : 0)
+                            + (ic ? tsz * 1.15f + (lab.length() > 0 ? tsz * 0.3f : 0) : 0);
+                    lw = Math.max(lw, lwi);
+                    textP.setFakeBoldText(true);
+                    vw = Math.max(vw, textP.measureText(valueText(s, sn)));
+                    textP.setFakeBoldText(false);
+                }
+                lw = lw > 0 ? Math.min(lw, (r - l) * 0.34f) + 6 * d : 0;
+                vw = Math.min(vw, (r - l) * 0.3f) + 6 * d;
+                if ((r - l) - lw - vw < 24 * d) vw = 0;
+                if ((r - l) - lw < 24 * d) lw = 0;
+            }
+            for (int i = 0; i < n; i++) {
+                Model.Series s = w.series.get(i);
+                Sensors.Sensor sn = sensor(s);
+                float a0 = t + i * (bs + gapPx);
+                float barH = Math.min(bs, 26 * d);
+                float y0 = a0 + (bs - barH) / 2f;
+                float base = a0 + bs / 2f + tsz * 0.35f;
+                if (lw > 0) {
+                    drawIconLabel(c, iconName(s, sn), labelFor(w, s, sn), l, l + lw - 6 * d, base, 0, tsz);
+                }
+                if (vw > 0) {
+                    textP.setColor(st.fontColor);
+                    textP.setFakeBoldText(true);
+                    drawText(c, valueText(s, sn), r - vw + 6 * d, r, base, 2, tsz);
+                    textP.setFakeBoldText(false);
+                }
+                drawGBar(c, w, s, i, sn, l + lw, y0, r - vw, y0 + barH, false);
+            }
+        } else {
+            float barW = Math.min(bs * 0.8f, 36 * d);
+            for (int i = 0; i < n; i++) {
+                Model.Series s = w.series.get(i);
+                Sensors.Sensor sn = sensor(s);
+                float a0 = l + i * (bs + gapPx);
+                float top = t, bot = b;
+                if (texts && (b - t) > tsz * 5) {
+                    textP.setColor(st.fontColor);
+                    textP.setFakeBoldText(true);
+                    drawText(c, valueText(s, sn), a0, a0 + bs, t + tsz, 1, tsz);
+                    textP.setFakeBoldText(false);
+                    top = t + tsz * 1.6f;
+                    String lab = labelFor(w, s, sn);
+                    if (lab.length() > 0) {
+                        textP.setColor(st.labelColor);
+                        drawText(c, lab, a0, a0 + bs, b - tsz * 0.2f, 1, tsz * 0.9f);
+                        bot = b - tsz * 1.5f;
+                    }
+                }
+                float x0 = a0 + (bs - barW) / 2f;
+                drawGBar(c, w, s, i, sn, x0, top, x0 + barW, bot, true);
+            }
+        }
+    }
+
+    private void drawGBar(Canvas c, Model.Widget w, Model.Series s, int idx, Sensors.Sensor sn, float x0, float y0,
+                          float x1, float y1, boolean vert) {
+        if (x1 - x0 < 2 || y1 - y0 < 2) return;
+        int base = gcol(s, idx);
+        boolean th = thFracs(s, sn, fr);
+        float f = fraction(s, sn);
+        float thick = vert ? x1 - x0 : y1 - y0;
+        float len = vert ? y1 - y0 : x1 - x0;
+        float rad = w.rounded ? Math.min(3 * d, thick / 2f) : 0;
+        fill.setStyle(Paint.Style.FILL);
+
+        if (w.barStyle == 1) {
+            float bl = 6 * d, g = 2 * d;
+            int cnt = Math.max(1, (int) ((len + g) / (bl + g)));
+            float blk = (len - g * (cnt - 1)) / cnt;
+            int lit = Math.round(f * cnt);
+            if (lit == 0 && f > 0.002f) lit = 1;
+            float lr = w.rounded ? Math.min(1.5f * d, blk / 2f) : 0;
+            for (int k = 0; k < cnt; k++) {
+                float off = k * (blk + g);
+                fill.setColor(k < lit ? gradColor(base, th, fr, (k + 0.5f) / cnt) : G_LCD_OFF);
+                if (!vert) tmp.set(x0 + off, y0, x0 + off + blk, y1);
+                else tmp.set(x0, y1 - off - blk, x1, y1 - off);
+                c.drawRoundRect(tmp, lr, lr, fill);
+            }
+            return;
+        }
+
+        fill.setColor(G_TRACK);
+        tmp.set(x0, y0, x1, y1);
+        c.drawRoundRect(tmp, rad, rad, fill);
+        if (sn == null || f <= 0.002f) return;
+        float fl = Math.max(Math.min(thick, len), len * f);
+        if (w.barStyle == 2) {
+            fill.setColor(colorAt(base, sn, sn.value));
+        } else if (!vert) {
+            fill.setShader(gradShader(base, th, fr, x0, 0, x1, 0));
+        } else {
+            fill.setShader(gradShader(base, th, fr, 0, y1, 0, y0));
+        }
+        if (!vert) tmp.set(x0, y0, x0 + fl, y1);
+        else tmp.set(x0, y1 - fl, x1, y1);
+        c.drawRoundRect(tmp, rad, rad, fill);
+        fill.setShader(null);
+    }
+
+    // ---- time series: smooth lines, axis labels and a legend table ----
+    private void drawGChart(Canvas c, Model.Widget w, float l, float t, float r, float b, boolean area) {
+        int n = w.series.size();
+        float ts = tscale(w);
+
+        // legend table at the bottom (with header if it fits, else without, else none)
+        float lsz = size(11 * d, 16 * d, ts);
+        float rh = lsz * 1.45f;
+        int mode = 0;
+        float legendH = 0;
+        if (w.legendTable) {
+            float limit = (b - t) * 0.5f;
+            if ((n + 1) * rh <= limit) {
+                mode = 2;
+                legendH = (n + 1) * rh;
+            } else if (n * rh <= limit) {
+                mode = 1;
+                legendH = n * rh;
+            }
+        }
+        float gb = b - legendH - (mode > 0 ? 4 * d : 0);
+
+        // shared value axis when all series have the same unit
+        boolean shared = true, custom = false;
+        Sensors.Unit unit = null;
+        Model.Series first = null;
+        Sensors.Sensor firstSn = null;
+        for (int i = 0; i < n; i++) {
+            Model.Series s = w.series.get(i);
+            Sensors.Sensor sn = sensor(s);
+            if (sn == null) continue;
+            if (first == null) {
+                first = s;
+                firstSn = sn;
+            }
+            if (unit == null) unit = sn.unit;
+            else if (unit != sn.unit) shared = false;
+            if (sn.fan) shared = false;
+            if (!Double.isNaN(s.min) || !Double.isNaN(s.max)) custom = true;
+        }
+        if (first == null) shared = false;
+
+        double lo = 0, hi = 1, step = 1;
+        float asz = size(10 * d, 14 * d, ts);
+        float pl = l;
+        float pt = t + asz * 0.5f;
+        if (shared) {
+            if (unit == Sensors.Unit.PERCENT || custom) {
+                double[] rg2 = range(first, firstSn);
+                lo = rg2[0];
+                hi = rg2[1];
+                step = (hi - lo) / 4.0;
+            } else {
+                double mn = Double.MAX_VALUE, mx = -Double.MAX_VALUE;
+                for (int i = 0; i < n; i++) {
+                    Model.Series s = w.series.get(i);
+                    History.Ring ring = hist.ring(s.sensorId);
+                    if (ring == null) continue;
+                    for (int k = 0; k < ring.count; k++) {
+                        float v = ring.get(k);
+                        if (v < mn) mn = v;
+                        if (v > mx) mx = v;
+                    }
+                }
+                if (mn > mx) {
+                    mn = 0;
+                    mx = 1;
+                }
+                double span = Math.max(mx - mn, 1e-9);
+                double raw = Math.max(span * 1.1, 1e-9) / 3.0;
+                double mag = Math.pow(10, Math.floor(Math.log10(raw)));
+                double fm = raw / mag;
+                step = (fm <= 1 ? 1 : fm <= 2 ? 2 : fm <= 5 ? 5 : 10) * mag;
+                lo = Math.floor(mn / step) * step;
+                hi = Math.ceil(mx / step) * step;
+                if (unit == Sensors.Unit.BYTES_PS || (mn >= 0 && lo < 0)) lo = 0;
+                if (hi - lo < step) hi = lo + step;
+            }
+            textP.setTextSize(asz);
+            textP.setFakeBoldText(false);
+            float mw = 0;
+            for (double v = lo; v <= hi + step * 0.01; v += step) {
+                mw = Math.max(mw, textP.measureText(axisText(firstSn, v)));
+            }
+            pl = l + mw + 5 * d;
+            if ((r - pl) < (r - l) * 0.4f) pl = l;
+        }
+        if (gb - pt < 16 * d) {
+            if (mode == 0) drawLegend(c, w, l, r, b, ts, true);
+            return;
+        }
+
+        // grid and axis labels
+        stroke.setStrokeWidth(1);
+        stroke.setColor(0x1CFFFFFF);
+        if (shared) {
+            for (double v = lo; v <= hi + step * 0.01; v += step) {
+                float y = gb - (float) ((v - lo) / (hi - lo)) * (gb - pt);
+                c.drawLine(pl, y, r, y, stroke);
+                if (pl > l) {
+                    textP.setColor(G_DIM);
+                    drawText(c, axisText(firstSn, v), l, pl - 4 * d, y + asz * 0.35f, 2, asz);
+                }
+            }
+        } else {
+            for (int k = 0; k <= 3; k++) {
+                float y = pt + (gb - pt) * k / 3f;
+                c.drawLine(pl, y, r, y, stroke);
+            }
+        }
+
+        // series
+        float stepX = (r - pl) / (History.N - 1);
+        for (int i = 0; i < n; i++) {
+            Model.Series s = w.series.get(i);
+            Sensors.Sensor sn = sensor(s);
+            History.Ring ring = hist.ring(s.sensorId);
+            if (sn == null || ring == null || ring.count < 2) continue;
+            int col = gcol(s, i);
+            int cnt = ring.count;
+            for (int k = 0; k < cnt; k++) {
+                float fv = shared ? (float) ((ring.get(k) - lo) / (hi - lo)) : norm(s, sn, ring.get(k));
+                px[k] = r - (cnt - 1 - k) * stepX;
+                py[k] = gb - cl(fv, 0f, 1f) * (gb - pt);
+            }
+            smooth(path, cnt);
+            if (area) {
+                path2.reset();
+                path2.addPath(path);
+                path2.lineTo(px[cnt - 1], gb);
+                path2.lineTo(px[0], gb);
+                path2.close();
+                fill.setStyle(Paint.Style.FILL);
+                fill.setShader(new LinearGradient(0, pt, 0, gb, (col & 0x00FFFFFF) | 0x66000000,
+                        (col & 0x00FFFFFF) | 0x0C000000, Shader.TileMode.CLAMP));
+                c.drawPath(path2, fill);
+                fill.setShader(null);
+            }
+            stroke.setStrokeWidth(1.6f * d);
+            stroke.setStrokeJoin(Paint.Join.ROUND);
+            stroke.setStrokeCap(w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT);
+            stroke.setColor(col);
+            c.drawPath(path, stroke);
+            stroke.setStrokeCap(Paint.Cap.BUTT);
+        }
+
+        if (mode == 0) {
+            drawLegend(c, w, pl, r, b, ts, true);
+            return;
+        }
+        drawLegendTable(c, w, l, r, b - legendH, lsz, rh, mode == 2);
+    }
+
+    private void drawLegendTable(Canvas c, Model.Widget w, float l, float r, float top, float lsz, float rh,
+                                 boolean header) {
+        int n = w.series.size();
+        String[] last = new String[n];
+        String[] max = new String[n];
+        textP.setTextSize(lsz);
+        textP.setFakeBoldText(false);
+        float lastW = textP.measureText("Last");
+        float maxW = textP.measureText("Max");
+        for (int i = 0; i < n; i++) {
+            Model.Series s = w.series.get(i);
+            Sensors.Sensor sn = sensor(s);
+            last[i] = valueText(s, sn);
+            History.Ring ring = hist.ring(s.sensorId);
+            double mv = sn != null ? sn.value : 0;
+            if (ring != null) {
+                for (int k = 0; k < ring.count; k++) mv = Math.max(mv, ring.get(k));
+            }
+            max[i] = sn == null ? "--" : join(partsAt(s, sn, mv));
+            lastW = Math.max(lastW, textP.measureText(last[i]));
+            maxW = Math.max(maxW, textP.measureText(max[i]));
+        }
+        float colGap = 10 * d;
+        boolean showMax = (r - l) - (lastW + colGap) - (maxW + colGap) >= (r - l) * 0.3f;
+        boolean showLast = (r - l) - (lastW + colGap) >= (r - l) * 0.3f;
+        float xMax = r;
+        float xLast = showMax ? r - maxW - colGap : r;
+        float nameR = (showLast ? xLast - lastW - colGap : r);
+
+        float y = top;
+        if (header) {
+            textP.setColor(G_DIM);
+            textP.setFakeBoldText(true);
+            if (showLast) drawText(c, "Last", xLast - lastW, xLast, y + rh * 0.5f + lsz * 0.35f, 2, lsz);
+            if (showMax) drawText(c, "Max", xMax - maxW, xMax, y + rh * 0.5f + lsz * 0.35f, 2, lsz);
+            textP.setFakeBoldText(false);
+            y += rh;
+        }
+        for (int i = 0; i < n; i++) {
+            Model.Series s = w.series.get(i);
+            Sensors.Sensor sn = sensor(s);
+            int col = gcol(s, i);
+            float base = y + rh / 2f + lsz * 0.35f;
+            float x = l;
+            String ic = iconName(s, sn);
+            if (ic != null) {
+                float is = lsz * 1.15f;
+                Icons.draw(c, ic, x, y + (rh - is) / 2f, is, col);
+                x += is + 4 * d;
+            } else {
+                fill.setStyle(Paint.Style.FILL);
+                fill.setColor(col);
+                tmp.set(x, y + rh / 2f - 1.5f * d, x + 12 * d, y + rh / 2f + 1.5f * d);
+                c.drawRoundRect(tmp, d, d, fill);
+                x += 12 * d + 4 * d;
+            }
+            String lab = labelFor(w, s, sn);
+            if (lab.length() > 0) {
+                textP.setColor(st.labelColor);
+                drawText(c, lab, x, nameR, base, 0, lsz);
+            }
+            textP.setColor(st.fontColor);
+            if (showLast) drawText(c, last[i], xLast - lastW, xLast, base, 2, lsz);
+            if (showMax) drawText(c, max[i], xMax - maxW, xMax, base, 2, lsz);
+            y += rh;
         }
     }
 }

@@ -437,6 +437,13 @@ final class Screens {
                         + "to keep memory use low.", 12, Ui.SUB));
             }
 
+            body.addView(Ui.header(a, "Panel style"));
+            body.addView(labeled(a, "Default panel style", choice(a, "Default panel style", Model.PANEL_NAMES,
+                    st.panelStyle, which -> { st.panelStyle = which; changed(a); })));
+            body.addView(Ui.text(a, "Grafana: panel header, sparklines, threshold bands, gradient or LCD bars "
+                    + "and a legend table. Each widget can override this. In Grafana style a series whose colour "
+                    + "is still white uses Grafana's own colours; pick any other colour to keep it.", 12, Ui.SUB));
+
             body.addView(Ui.header(a, "Threshold colours"));
             body.addView(check(a, "Colour values when they pass a threshold", st.thEnabled,
                     (btn, on) -> { st.thEnabled = on; changed(a); }));
@@ -798,7 +805,7 @@ final class Screens {
         LinearLayout body = Ui.vbox(a);
         sc.root = Ui.scaffold(a, "Credits", v -> a.pop(), body);
         body.addView(Ui.text(a, "Grafalinux System Monitor", 22, Ui.TEXT));
-        Ui.add(body, Ui.text(a, "Version: v0.3.2 Beta", 15, Ui.SUB), 6);
+        Ui.add(body, Ui.text(a, "Version: v0.3.3 Beta", 15, Ui.SUB), 6);
         Ui.add(body, Ui.text(a, "Author: ItsNotMeBro87 and Claude", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "License: GPLv3", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "This program is free software: you can redistribute it and/or modify it "
@@ -863,6 +870,16 @@ final class Screens {
         body.addView(labeled(a, "Ring thickness", choice(a, "Ring thickness",
                 new String[]{"Thin", "Normal", "Thick", "Full (pie)"}, w.ringThick,
                 which -> w.ringThick = which)));
+
+        body.addView(Ui.header(a, "Panel style"));
+        body.addView(labeled(a, "Panel style", choice(a, "Panel style", Model.STYLE_NAMES, w.style,
+                which -> w.style = which)));
+        body.addView(labeled(a, "Bar style (Grafana)", choice(a, "Bar style", Model.BAR_STYLE_NAMES, w.barStyle,
+                which -> w.barStyle = which)));
+        body.addView(check(a, "Sparkline behind numbers (Grafana)", w.sparkline, (btn, on) -> w.sparkline = on));
+        body.addView(check(a, "Threshold bands around gauges (Grafana)", w.bands, (btn, on) -> w.bands = on));
+        body.addView(check(a, "Legend table with last and max values on graphs (Grafana)", w.legendTable,
+                (btn, on) -> w.legendTable = on));
 
         body.addView(Ui.header(a, "Clock (for Clock widgets)"));
         body.addView(labeled(a, "Clock style", choice(a, "Clock style",
