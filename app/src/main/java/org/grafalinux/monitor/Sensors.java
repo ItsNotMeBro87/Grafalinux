@@ -4,6 +4,11 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -57,6 +62,26 @@ final class Sensors {
             }
             l.add(s);
         }
+    }
+
+    /** Adds this phone's own battery readings (from Android, not from the PC). Cheap: no polling. */
+    static void addPhone(Context ctx, Table t) {
+        Intent b = ctx.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (b == null) return;
+        String cat = "This phone";
+        int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        if (level >= 0 && scale > 0) {
+            t.add(cat, "phone.battery", "Battery level", Unit.PERCENT, 100.0 * level / scale, 100, null);
+        }
+        int temp = b.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Integer.MIN_VALUE);
+        if (temp != Integer.MIN_VALUE) {
+            t.add(cat, "phone.battery_temp", "Battery temperature", Unit.CELSIUS, temp / 10.0, 70, "temp");
+        }
+        int mv = b.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0);
+        if (mv > 0) t.add(cat, "phone.battery_v", "Battery voltage", Unit.VOLT, mv / 1000.0, 5, null);
+        int plugged = b.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        t.add(cat, "phone.charging", "Charging (1 = plugged in)", Unit.NONE, plugged != 0 ? 1 : 0, 1, null);
     }
 
     static double opt(JSONObject o, String k) {

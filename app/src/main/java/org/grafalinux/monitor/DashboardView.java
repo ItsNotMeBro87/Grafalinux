@@ -12,6 +12,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.Locale;
 
 /**
@@ -661,9 +664,10 @@ final class DashboardView extends View {
         if (rr - l < 4 || b - t < 4) return;
         float top0 = t;
 
-        // text-only widgets keep a title strip; graphs never shrink for text (the title floats on top)
-        boolean textType = w.type == Model.NUMBER || w.type == Model.TEXT;
-        if (w.title.length() > 0 && textType) {
+        boolean hasTitle = w.title.length() > 0 && w.titlePos != 2;
+        boolean floating = hasTitle && w.titlePos == 1;
+        if (hasTitle && w.titlePos == 0) {
+            // title above the graph: it never covers anything (the graph gets the rest of the box)
             float tsz = size(13 * d, (b - t) * 0.2f, ts);
             textP.setColor(w.titleColor != 0 ? w.titleColor : st.fontColor);
             textP.setFakeBoldText(true);
@@ -675,38 +679,37 @@ final class DashboardView extends View {
 
         if (w.type == Model.TEXT) {
             drawTextWidget(c, w, l, t, rr, b);
-            return;
-        }
-        if (w.series.isEmpty()) {
+        } else if (w.type == Model.CLOCK) {
+            drawClock(c, w, l, t, rr, b);
+        } else if (w.series.isEmpty()) {
             textP.setColor(0xFF777777);
             drawText(c, "No sensors", l, rr, (t + b) / 2f, 1, 12 * d);
-            return;
+        } else {
+            switch (w.type) {
+                case Model.NUMBER:
+                    drawNumber(c, w, l, t, rr, b);
+                    break;
+                case Model.BAR:
+                    drawBars(c, w, l, t, rr, b);
+                    break;
+                case Model.LINE:
+                    drawChart(c, w, l, t, rr, b, false);
+                    break;
+                case Model.AREA:
+                    drawChart(c, w, l, t, rr, b, true);
+                    break;
+                case Model.DONUT:
+                    drawDonut(c, w, l, t, rr, b);
+                    break;
+                case Model.PIE:
+                    drawPie(c, w, l, t, rr, b);
+                    break;
+                default:
+                    drawGauge(c, w, l, t, rr, b);
+                    break;
+            }
         }
-
-        switch (w.type) {
-            case Model.NUMBER:
-                drawNumber(c, w, l, t, rr, b);
-                break;
-            case Model.BAR:
-                drawBars(c, w, l, t, rr, b);
-                break;
-            case Model.LINE:
-                drawChart(c, w, l, t, rr, b, false);
-                break;
-            case Model.AREA:
-                drawChart(c, w, l, t, rr, b, true);
-                break;
-            case Model.DONUT:
-                drawDonut(c, w, l, t, rr, b);
-                break;
-            case Model.PIE:
-                drawPie(c, w, l, t, rr, b);
-                break;
-            default:
-                drawGauge(c, w, l, t, rr, b);
-                break;
-        }
-        if (w.title.length() > 0 && !textType) drawTitleChip(c, w, l, top0, rr, ts);
+        if (floating) drawTitleChip(c, w, l, top0, rr, ts);
     }
 
     /** Small label floating over the top of a graph (the graph itself is not resized). */
@@ -733,6 +736,88 @@ final class DashboardView extends View {
         textP.setTextAlign(Paint.Align.LEFT);
         c.drawText(w.title, x0 + 5 * d, y0 + chH / 2f + tsz * 0.35f, textP);
         textP.setFakeBoldText(false);
+    }
+
+    // ---- clock ----
+    private void drawClock(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+        float ts = tscale(w);
+        long now = System.currentTimeMillis();
+        String dateStr = "";
+        if (w.clockDate && w.clockFormat.length() > 0) {
+            try {
+                dateStr = new SimpleDateFormat(w.clockFormat, Locale.getDefault()).format(new Date(now));
+            } catch (IllegalArgumentException e) {
+                dateStr = "?";
+            }
+        }
+        if (w.clockMode == 2) {
+            drawAnalog(c, w, l, t, r, b, now, dateStr, ts);
+            return;
+        }
+        String pattern = w.clockMode == 1 ? (w.clockSeconds ? "h:mm:ss a" : "h:mm a")
+                : (w.clockSeconds ? "HH:mm:ss" : "HH:mm");
+        String timeStr = new SimpleDateFormat(pattern, Locale.getDefault()).format(new Date(now));
+        float band = b - t;
+        boolean date = dateStr.length() > 0;
+        float vs = size(90 * d, band * (date ? 0.6f : 0.82f), ts);
+        float ds = size(26 * d, band * 0.2f, ts);
+        float total = date ? vs * 0.95f + ds * 1.5f : vs;
+        float y0 = t + (band - total) / 2f;
+        textP.setColor(st.fontColor);
+        textP.setFakeBoldText(true);
+        drawText(c, timeStr, l, r, y0 + vs * 0.8f, w.align, vs);
+        textP.setFakeBoldText(false);
+        if (date) {
+            textP.setColor(st.labelColor);
+            drawText(c, dateStr, l, r, y0 + vs * 0.95f + ds * 1.05f, w.align, ds);
+        }
+    }
+
+    private void drawAnalog(Canvas c, Model.Widget w, float l, float t, float r, float b, long now,
+                            String dateStr, float ts) {
+        Calendar cal = Calendar.getInstance();
+        cal.setTimeInMillis(now);
+        float dia = Math.max(8 * d, Math.min(r - l, b - t));
+        float cx = (l + r) / 2f;
+        float cy = (t + b) / 2f;
+        float rad = dia / 2f - 2 * d;
+        stroke.setStrokeCap(Paint.Cap.BUTT);
+        stroke.setStrokeWidth(Math.max(2 * d, rad * 0.04f));
+        stroke.setColor(0x44FFFFFF);
+        c.drawCircle(cx, cy, rad, stroke);
+        for (int i = 0; i < 12; i++) {
+            double a = Math.toRadians(i * 30 - 90);
+            float r0 = rad * (i % 3 == 0 ? 0.80f : 0.88f);
+            float r1 = rad * 0.95f;
+            stroke.setStrokeWidth(i % 3 == 0 ? 2.5f * d : 1.5f * d);
+            stroke.setColor(0x99FFFFFF);
+            c.drawLine(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0,
+                    cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, stroke);
+        }
+        if (dateStr.length() > 0) {
+            textP.setColor(st.labelColor);
+            drawText(c, dateStr, cx - rad * 0.55f, cx + rad * 0.55f, cy + rad * 0.52f, 1,
+                    size(rad * 0.16f, rad * 0.2f, ts));
+        }
+        float hour = cal.get(Calendar.HOUR) + cal.get(Calendar.MINUTE) / 60f;
+        float min = cal.get(Calendar.MINUTE) + cal.get(Calendar.SECOND) / 60f;
+        hand(c, cx, cy, hour * 30f, rad * 0.5f, Math.max(3 * d, rad * 0.06f), st.fontColor);
+        hand(c, cx, cy, min * 6f, rad * 0.75f, Math.max(2 * d, rad * 0.04f), st.fontColor);
+        if (w.clockSeconds) {
+            hand(c, cx, cy, cal.get(Calendar.SECOND) * 6f, rad * 0.86f, Math.max(1f, rad * 0.015f), st.warnColor);
+        }
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(st.fontColor);
+        c.drawCircle(cx, cy, Math.max(2.5f * d, rad * 0.05f), fill);
+    }
+
+    private void hand(Canvas c, float cx, float cy, float deg, float len, float width, int color) {
+        double a = Math.toRadians(deg - 90);
+        stroke.setStrokeWidth(width);
+        stroke.setColor(color);
+        stroke.setStrokeCap(Paint.Cap.ROUND);
+        c.drawLine(cx, cy, cx + (float) Math.cos(a) * len, cy + (float) Math.sin(a) * len, stroke);
+        stroke.setStrokeCap(Paint.Cap.BUTT);
     }
 
     // ---- number ----
@@ -853,6 +938,10 @@ final class DashboardView extends View {
 
     // ---- donut ----
     private void drawDonut(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+        if (w.ringThick == 3) {
+            drawPie(c, w, l, t, r, b);
+            return;
+        }
         int n = w.series.size();
         float ts = tscale(w);
         float dia = Math.max(8 * d, Math.min(r - l, b - t));

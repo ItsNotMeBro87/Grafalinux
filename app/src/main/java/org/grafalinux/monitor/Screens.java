@@ -556,6 +556,42 @@ final class Screens {
                     })));
             body.addView(Ui.text(a, "The menu always opens with a swipe from the left edge, "
                     + "or from the long-press menu.", 12, Ui.SUB));
+
+            body.addView(Ui.header(a, "Experimental: wake the screen"));
+            body.addView(labeled(a, "Wake mode", choice(a, "Wake the screen",
+                    new String[]{"Off", "When USB power connects", "Check the PC every few seconds"}, st.wakeMode,
+                    which -> {
+                        st.wakeMode = which;
+                        a.store.saveSettings();
+                        a.applySettings();
+                        build[0].run();
+                    })));
+            if (st.wakeMode == 1) {
+                body.addView(warn(a, "Warning: this needs the phone to be powered from the PC's USB port, so "
+                        + "it turns on when the PC does. Keeping a phone on constant charge can wear out its "
+                        + "battery faster. It works best on Android 5 to 7; newer Android versions limit apps "
+                        + "that open themselves."));
+            } else if (st.wakeMode == 2) {
+                final int[] secs = {15, 30, 60, 120};
+                int cur = 1;
+                for (int i = 0; i < secs.length; i++) {
+                    if (secs[i] == st.wakeInterval) cur = i;
+                }
+                body.addView(labeled(a, "Check every", choice(a, "Check every",
+                        new String[]{"15 seconds", "30 seconds", "60 seconds", "120 seconds"}, cur, which -> {
+                            st.wakeInterval = secs[which];
+                            a.store.saveSettings();
+                            a.applySettings();
+                        })));
+                body.addView(warn(a, "Warning: this wakes the phone in the background to ask your PC if it "
+                        + "is on, which uses battery (shorter intervals use more). Android may delay checks "
+                        + "while the phone sleeps unplugged. Open the app once after restarting the phone."));
+            }
+            if (st.wakeMode != 0) {
+                body.addView(Ui.text(a, "While a wake mode is on, the screen stays on only while the PC is "
+                        + "reachable; when the PC stops answering, the phone's normal screen timeout applies.",
+                        12, Ui.SUB));
+            }
             body.addView(check(a, "Keep the screen on", st.keepOn, (btn, on) -> {
                 st.keepOn = on;
                 a.store.saveSettings();
@@ -618,6 +654,12 @@ final class Screens {
     // ------------------------------------------------------------------
     // Credits
     // ------------------------------------------------------------------
+    private static TextView warn(MainActivity a, String s) {
+        TextView t = Ui.text(a, s, 12, 0xFFFFB74D);
+        t.setPadding(0, Ui.dp(a, 4), 0, Ui.dp(a, 4));
+        return t;
+    }
+
     private static void bgChanged(MainActivity a) {
         a.store.saveSettings();
         a.applyBackground();
@@ -756,7 +798,7 @@ final class Screens {
         LinearLayout body = Ui.vbox(a);
         sc.root = Ui.scaffold(a, "Credits", v -> a.pop(), body);
         body.addView(Ui.text(a, "Grafalinux System Monitor", 22, Ui.TEXT));
-        Ui.add(body, Ui.text(a, "Version: v0.3.1 Beta", 15, Ui.SUB), 6);
+        Ui.add(body, Ui.text(a, "Version: v0.3.2 Beta", 15, Ui.SUB), 6);
         Ui.add(body, Ui.text(a, "Author: ItsNotMeBro87 and Claude", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "License: GPLv3", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "This program is free software: you can redistribute it and/or modify it "
@@ -788,8 +830,8 @@ final class Screens {
         sc.root = Ui.scaffold(a, isNew ? "New widget" : "Edit widget", v -> a.pop(), body);
 
         body.addView(Ui.header(a, "Appearance"));
-        body.addView(labeled(a, "Style", choice(a, "Widget style", Model.TYPE_NAMES, w.type,
-                which -> w.type = which)));
+        body.addView(labeled(a, "Style", choice(a, "Widget style", Model.TYPE_NAMES,
+                Model.typeIndex(w.type), which -> w.type = Model.TYPE_IDS[which])));
         final EditText title = Ui.edit(a, "Title (optional)", w.title, InputType.TYPE_CLASS_TEXT);
         Ui.onText(title, s -> w.title = s);
         Ui.add(body, title, 4);
@@ -799,6 +841,9 @@ final class Screens {
         textField.setMinLines(2);
         Ui.onText(textField, s -> w.text = s);
         Ui.add(body, textField, 4);
+        body.addView(labeled(a, "Title position", choice(a, "Title position",
+                new String[]{"Above the graph", "Floating over the graph", "Hidden"}, w.titlePos,
+                which -> w.titlePos = which)));
         body.addView(labeled(a, "Text alignment", choice(a, "Text alignment", Model.ALIGN_NAMES, w.align,
                 which -> w.align = which)));
         body.addView(labeled(a, "Sensor names", choice(a, "Sensor names", Model.NAME_MODE_NAMES, w.nameMode,
@@ -816,7 +861,32 @@ final class Screens {
             public void set(int v) { w.ringGap = v; }
         }));
         body.addView(labeled(a, "Ring thickness", choice(a, "Ring thickness",
-                new String[]{"Thin", "Normal", "Thick"}, w.ringThick, which -> w.ringThick = which)));
+                new String[]{"Thin", "Normal", "Thick", "Full (pie)"}, w.ringThick,
+                which -> w.ringThick = which)));
+
+        body.addView(Ui.header(a, "Clock (for Clock widgets)"));
+        body.addView(labeled(a, "Clock style", choice(a, "Clock style",
+                new String[]{"Digital, 24-hour", "Digital, 12-hour (AM/PM)", "Analog"}, w.clockMode,
+                which -> w.clockMode = which)));
+        body.addView(check(a, "Show seconds", w.clockSeconds, (btn, on) -> w.clockSeconds = on));
+        body.addView(check(a, "Show the date", w.clockDate, (btn, on) -> w.clockDate = on));
+        final EditText fmt = Ui.edit(a, "Date format, e.g. EEE, d MMM yyyy", w.clockFormat,
+                InputType.TYPE_CLASS_TEXT);
+        Ui.onText(fmt, s -> w.clockFormat = s);
+        Ui.add(body, fmt, 4);
+        final String[] presetNames = {"Choose a preset\u2026", "Weekday, day month (EEE, d MMM yyyy)",
+                "Long (EEEE, d MMMM yyyy)", "Day/month/year (dd/MM/yyyy)", "Month/day/year (MM/dd/yyyy)",
+                "Year-month-day (yyyy-MM-dd)", "Short (d MMM)"};
+        final String[] presetFormats = {"", "EEE, d MMM yyyy", "EEEE, d MMMM yyyy", "dd/MM/yyyy", "MM/dd/yyyy",
+                "yyyy-MM-dd", "d MMM"};
+        body.addView(labeled(a, "Date presets", choice(a, "Date presets", presetNames, 0, which -> {
+            if (which > 0) {
+                w.clockFormat = presetFormats[which];
+                fmt.setText(presetFormats[which]);
+            }
+        })));
+        body.addView(Ui.text(a, "Format letters: EEEE = weekday, d = day, MMMM = month name, yyyy = year, "
+                + "HH = hour. The date follows the phone's language.", 12, Ui.SUB));
         body.addView(Ui.colorRow(a, "Title colour", w.titleColor != 0 ? w.titleColor : st.fontColor,
                 st.fontColor, col -> w.titleColor = (col == st.fontColor) ? 0 : col));
 

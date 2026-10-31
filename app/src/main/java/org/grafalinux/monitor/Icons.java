@@ -1,6 +1,7 @@
 package org.grafalinux.monitor;
 
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -51,7 +52,7 @@ final class Icons {
             "R 6 6 12 12 2 R 9.5 9.5 5 5 1 M 9 3 L 9 6 M 15 3 L 15 6 M 9 18 L 9 21 M 15 18 L 15 21 M 3 9 L 6 9 M 3 15 L 6 15 M 18 9 L 21 9 M 18 15 L 21 15",
             "M 10 13.5 L 10 5 C 10 3.9 10.9 3 12 3 C 13.1 3 14 3.9 14 5 L 14 13.5 C 15.2 14.4 16 15.8 16 17.5 C 16 19.9 14.2 21.5 12 21.5 C 9.8 21.5 8 19.9 8 17.5 C 8 15.8 8.8 14.4 10 13.5 Z M 12 8.5 L 12 16.5 O 12 17.5 0.6",
             "M 12 21 C 8.5 21 6.5 18.3 6.5 15 C 6.5 11.5 9 9.5 10 6 C 10.5 4.5 11.4 3.5 12 3 C 12 6 13.5 8 15 10 C 16.4 11.8 17.5 13.3 17.5 15 C 17.5 18.3 15.5 21 12 21 Z M 12 17.5 C 10.8 17.5 10 16.6 10 15.5 C 10 14.4 11 13.5 12 12.5 C 13 13.5 14 14.4 14 15.5 C 14 16.6 13.2 17.5 12 17.5 Z",
-            "O 12 12 1.5 M 12.00 10.30 C 10.00 8.60 9.40 5.00 12.00 3.00 C 14.70 4.60 14.30 8.70 12.90 10.50 M 13.47 12.85 C 15.94 11.97 19.36 13.25 19.79 16.50 C 17.06 18.04 13.71 15.64 12.85 13.53 M 10.53 12.85 C 10.06 15.43 7.24 17.75 4.21 16.50 C 4.24 13.36 7.99 11.66 10.25 11.97",
+            "O 12 12 1.2 M 12.00 10.40 C 10.50 6.50 13.20 3.80 16.20 3.20 M 13.39 11.20 C 16.01 7.95 19.70 8.94 21.72 11.24 M 13.39 12.80 C 17.51 13.45 18.50 17.14 17.52 20.04 M 12.00 13.60 C 13.50 17.50 10.80 20.20 7.80 20.80 M 10.61 12.80 C 7.99 16.05 4.30 15.06 2.28 12.76 M 10.61 11.20 C 6.49 10.55 5.50 6.86 6.48 3.96",
             "R 2 6 20 11 2 O 8.5 11.5 2.6 O 15.5 11.5 2.6 M 5 17 L 5 19.5 M 9 17 L 9 19.5",
             "R 3 7 18 9 1.5 M 7 16 L 7 19 M 12 16 L 12 19 M 17 16 L 17 19 M 8 10.5 L 8 12.5 M 12 10.5 L 12 12.5 M 16 10.5 L 16 12.5",
             "R 3 5 18 14 2 M 3 14 L 21 14 M 7 17 L 7.01 17 M 11 17 L 17 17",
@@ -92,6 +93,11 @@ final class Icons {
             if (sn.unit == Sensors.Unit.MHZ) return "gauge";
             return "cpu";
         }
+        if (id.startsWith("phone.")) {
+            if (sn.unit == Sensors.Unit.CELSIUS) return "thermometer";
+            if (sn.unit == Sensors.Unit.VOLT) return "bolt";
+            return "battery";
+        }
         if (id.startsWith("load.")) return "activity";
         if (id.startsWith("mem.") || id.startsWith("swap.")) return "ram";
         if (id.startsWith("gpu.")) {
@@ -123,19 +129,35 @@ final class Icons {
         }
     }
 
+    private static final java.util.HashMap<Integer, Path> SIZED = new java.util.HashMap<Integer, Path>();
+    private static final Matrix M = new Matrix();
+
+    /**
+     * Draws an icon at its real pixel size. The path is scaled once (and cached) instead of scaling the
+     * canvas, because a scaled canvas makes Android enlarge a small bitmap of the path and big icons blur.
+     */
     static void draw(Canvas c, String name, float x, float y, float size, int color) {
         int i = indexOf(name);
         if (i < 0 || size < 2) return;
-        Path p = PATHS[i];
+        int px = Math.round(size);
+        int key = i * 100000 + px;
+        Path p = SIZED.get(key);
         if (p == null) {
-            p = parse(DATA[i]);
-            PATHS[i] = p;
+            Path base = PATHS[i];
+            if (base == null) {
+                base = parse(DATA[i]);
+                PATHS[i] = base;
+            }
+            if (SIZED.size() > 80) SIZED.clear();
+            p = new Path();
+            M.setScale(px / 24f, px / 24f);
+            base.transform(M, p);
+            SIZED.put(key, p);
         }
         P.setColor(color);
-        float k = size / 24f;
+        P.setStrokeWidth(Math.max(1f, 2f * px / 24f));
         c.save();
         c.translate(x, y);
-        c.scale(k, k);
         c.drawPath(p, P);
         c.restore();
     }

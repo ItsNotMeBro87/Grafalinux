@@ -14,9 +14,18 @@ final class Model {
     static final int WHITE = 0xFFFFFFFF;
     static final int BLACK = 0xFF000000;
 
-    static final int NUMBER = 0, GAUGE = 1, BAR = 2, LINE = 3, AREA = 4, DONUT = 5, PIE = 6, TEXT = 7;
+    static final int NUMBER = 0, GAUGE = 1, BAR = 2, LINE = 3, AREA = 4, DONUT = 5, PIE = 6, TEXT = 7, CLOCK = 8;
+    /** Widget types offered in the editor (PIE is old: it is now a donut with "Full (pie)" thickness). */
+    static final int[] TYPE_IDS = {NUMBER, GAUGE, BAR, LINE, AREA, DONUT, TEXT, CLOCK};
     static final String[] TYPE_NAMES = {"Number", "Gauge", "Bar", "Line graph", "Area graph",
-            "Donut", "Pie", "Text"};
+            "Donut / pie", "Text", "Clock"};
+
+    static int typeIndex(int type) {
+        for (int i = 0; i < TYPE_IDS.length; i++) {
+            if (TYPE_IDS[i] == type) return i;
+        }
+        return 0;
+    }
     static final String[] ALIGN_NAMES = {"Left", "Center", "Right"};
     static final String[] NAME_MODE_NAMES = {"Follow global setting", "Show sensor names", "Hide sensor names"};
     static final String[] TEXT_SIZE_NAMES = {"Follow global setting", "Small", "Normal", "Large", "Extra large"};
@@ -129,7 +138,12 @@ final class Model {
         boolean rounded = true;     // rounded or sharp corners / line ends
         boolean vertical = false;   // bars: vertical columns instead of horizontal bars
         int ringGap = 2;            // dp between stacked rings
-        int ringThick = 1;          // 0 thin, 1 normal, 2 thick
+        int ringThick = 1;          // 0 thin, 1 normal, 2 thick, 3 full (a pie)
+        int titlePos = 0;           // 0 above the graph, 1 floating over it, 2 hidden
+        int clockMode = 0;          // 0 digital 24 h, 1 digital 12 h, 2 analog
+        boolean clockSeconds = false;
+        boolean clockDate = true;
+        String clockFormat = "EEE, d MMM yyyy";
         ArrayList<Series> series = new ArrayList<Series>();
 
         JSONObject toJson() throws JSONException {
@@ -151,6 +165,11 @@ final class Model {
             o.put("vertical", vertical);
             o.put("ringGap", ringGap);
             o.put("ringThick", ringThick);
+            o.put("titlePos", titlePos);
+            o.put("clockMode", clockMode);
+            o.put("clockSeconds", clockSeconds);
+            o.put("clockDate", clockDate);
+            o.put("clockFormat", clockFormat);
             JSONArray arr = new JSONArray();
             for (Series s : series) arr.put(s.toJson());
             o.put("series", arr);
@@ -176,6 +195,15 @@ final class Model {
             w.vertical = o.optBoolean("vertical", false);
             w.ringGap = o.optInt("ringGap", 2);
             w.ringThick = o.optInt("ringThick", 1);
+            w.titlePos = o.optInt("titlePos", 0);
+            w.clockMode = o.optInt("clockMode", 0);
+            w.clockSeconds = o.optBoolean("clockSeconds", false);
+            w.clockDate = o.optBoolean("clockDate", true);
+            w.clockFormat = o.optString("clockFormat", "EEE, d MMM yyyy");
+            if (w.type == PIE) {            // pies are now donuts with full thickness
+                w.type = DONUT;
+                w.ringThick = 3;
+            }
             JSONArray arr = o.optJSONArray("series");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -299,6 +327,8 @@ final class Model {
         int iconColor = WHITE;
         boolean showIcons = true;
         boolean thGradient = false;     // fade gradually towards the warning / critical colours
+        int wakeMode = 0;               // experimental: 0 off, 1 when USB power connects, 2 check the PC
+        int wakeInterval = 30;          // seconds between checks (mode 2)
 
         Settings() {
             resetThresholds();

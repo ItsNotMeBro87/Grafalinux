@@ -11,6 +11,7 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -63,6 +64,8 @@ public final class MainActivity extends Activity {
     private final HashSet<String> wanted = new HashSet<String>();
     private float downX, downY;
     private boolean edgeTrack = false;
+    private boolean online = false;        // data is arriving from the server
+    private long lastOk = 0;
 
     // undo / redo: snapshots of the dashboard layout as JSON text
     private final ArrayList<String> undoStack = new ArrayList<String>();
@@ -101,6 +104,25 @@ public final class MainActivity extends Activity {
         updateHint();
         updateEditBar();
         applySettings();
+        handleWake(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleWake(intent);
+    }
+
+    /** Started by the experimental wake feature: light the screen even if the phone was locked. */
+    @SuppressWarnings("deprecation")
+    private void handleWake(Intent i) {
+        if (i != null && i.getBooleanExtra("wake", false)) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            i.removeExtra("wake");
+        }
     }
 
     /** Hides the system bars again after a keyboard, dialog or other screen brought them back. */
@@ -117,6 +139,7 @@ public final class MainActivity extends Activity {
         applyFullscreen();
         updatePolling();
         showMenuButton();
+        scheduleClock();
     }
 
     @Override
@@ -125,6 +148,7 @@ public final class MainActivity extends Activity {
         poller.stop();
         pollKey = "";
         handler.removeCallbacks(hideMenu);
+        handler.removeCallbacks(clockTick);
     }
 
     @Override
@@ -410,6 +434,7 @@ public final class MainActivity extends Activity {
         updatePolling();
         lastSaved = snapshot();
         updateEditBar();
+        scheduleClock();
     }
 
     private void undo() {
@@ -437,15 +462,13 @@ public final class MainActivity extends Activity {
         dv.relayout();
         updatePolling();
         trackUndo();
+        scheduleClock();
     }
 
     void applySettings() {
         Model.Settings s = store.settings;
-        if (s.keepOn) {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        } else {
-            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        }
+        updateKeepOn();
+        Wake.apply(this, s);
         int o = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
         if (s.orientation == 1) o = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
         else if (s.orientation == 2) o = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
@@ -463,6 +486,17 @@ public final class MainActivity extends Activity {
         updatePolling();
     }
 
+    /** Keep the screen on: always (setting), or only while the PC answers when a wake mode is chosen. */
+    private void updateKeepOn() {
+        Model.Settings s = store.settings;
+        boolean keep = s.wakeMode != 0 ? online : s.keepOn;
+        if (keep) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
     private void applyFullscreen() {
         View decor = getWindow().getDecorView();
         if (store.settings.fullscreen) {
@@ -475,6 +509,34 @@ public final class MainActivity extends Activity {
         } else {
             decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // clock widgets: redraw once a minute (or each second when a clock shows seconds), only while visible
+    // ------------------------------------------------------------------
+    private final Runnable clockTick = new Runnable() {
+        @Override
+        public void run() {
+            dv.invalidate();
+            scheduleClock();
+        }
+    };
+
+    private void scheduleClock() {
+        handler.removeCallbacks(clockTick);
+        if (stack.size() != 1) return;
+        boolean any = false;
+        boolean secs = false;
+        for (Model.Widget w : dash.widgets) {
+            if (w.type == Model.CLOCK) {
+                any = true;
+                if (w.clockSeconds) secs = true;
+            }
+        }
+        if (!any) return;
+        long now = System.currentTimeMillis();
+        long delay = secs ? 1000 - now % 1000 : 60000 - now % 60000;
+        handler.postDelayed(clockTick, delay + 20);
     }
 
     // ------------------------------------------------------------------
@@ -493,6 +555,7 @@ public final class MainActivity extends Activity {
         updateHint();
         dv.relayout();
         updatePolling();
+        scheduleClock();
     }
 
     void openHome() {
@@ -603,6 +666,12 @@ public final class MainActivity extends Activity {
     private final Poller.Listener listener = new Poller.Listener() {
         @Override
         public void onData(Sensors.Table t) {
+            Sensors.addPhone(MainActivity.this, t);
+            lastOk = SystemClock.elapsedRealtime();
+            if (!online) {
+                online = true;
+                updateKeepOn();
+            }
             latest = t;
             hist.record(t, wanted);
             dv.setTable(t);
@@ -612,6 +681,10 @@ public final class MainActivity extends Activity {
 
         @Override
         public void onError(String msg) {
+            if (online && SystemClock.elapsedRealtime() - lastOk > 8000) {
+                online = false;
+                updateKeepOn();
+            }
             status.setText("Offline: " + msg);
             status.setVisibility(View.VISIBLE);
             stack.get(stack.size() - 1).onError(msg);
@@ -650,6 +723,7 @@ public final class MainActivity extends Activity {
         stack.add(s);
         screens.addView(s.root, new FrameLayout.LayoutParams(MATCH, MATCH));
         updatePolling();
+        scheduleClock();
     }
 
     void pop() {
@@ -661,6 +735,7 @@ public final class MainActivity extends Activity {
         updateHint();
         updatePolling();
         if (stack.size() == 1) showMenuButton();
+        scheduleClock();
         if (store.settings.fullscreen) handler.postDelayed(refullscreen, 300);
     }
 

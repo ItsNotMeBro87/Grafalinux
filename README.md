@@ -22,14 +22,16 @@ only, e.g. `sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`.
 Push this folder to a GitHub repository. The workflow in `.github/workflows/build.yml` builds
 `app-debug.apk`; download it from the run's **Artifacts** section. No Android Studio needed.
 
-## Status (v0.3.0 Beta)
+## Status (v0.3.2 Beta)
 
-* Servers (manual add / edit / remove), categorised sensor browser.
+* Servers (manual add / edit / remove), categorised sensor browser, this phone's battery.
 * Several dashboards with a default; grid with padding; drag-and-drop, resize, undo/redo, lock.
-* Widgets: number, gauge, bar, line, area, donut, pie, text; multi-sensor; stacked bars and
-  concentric gauges; optional sensor names; per-widget text size.
-* Colours, threshold colours, gradient or image backgrounds, units (C/F, bytes/bits, RPM/%),
-  update interval, keep-screen-on, fullscreen, rotation.
+* Widgets: number, gauge, bar (horizontal / vertical), line, area, donut / pie, text, clock
+  (digital or analog); icons; stacked bars and rings; title above, floating or hidden.
+* Colour wheel, threshold colours (optionally gradual), gradient or image backgrounds,
+  units (C/F, bytes/bits, RPM/%), fans convertible between % and RPM, fullscreen, rotation.
+* Experimental: wake the screen when USB power connects, or by checking the PC every few seconds.
 
-Not done yet: server discovery, token pairing and HTTPS, Tabler icon set, desktop GUI.
-Traffic is currently plain HTTP with an optional token: use it on a trusted home network only.
+Requires Android 5.0 or newer. Not done yet: server discovery, token pairing and HTTPS,
+Grafana-style panels (planned), desktop GUI. Traffic is plain HTTP with an optional token:
+use it on a trusted home network only.

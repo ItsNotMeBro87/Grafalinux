@@ -145,6 +145,8 @@ final class Store {
         s.iconColor = sp.getInt("iconColor", Model.WHITE);
         s.showIcons = sp.getBoolean("showIcons", true);
         s.thGradient = sp.getBoolean("thGradient", false);
+        s.wakeMode = sp.getInt("wakeMode", 0);
+        s.wakeInterval = sp.getInt("wakeInterval", 30);
     }
 
     void saveSettings() {
@@ -181,6 +183,8 @@ final class Store {
         e.putInt("iconColor", s.iconColor);
         e.putBoolean("showIcons", s.showIcons);
         e.putBoolean("thGradient", s.thGradient);
+        e.putInt("wakeMode", s.wakeMode);
+        e.putInt("wakeInterval", s.wakeInterval);
         e.apply();
     }
 }
