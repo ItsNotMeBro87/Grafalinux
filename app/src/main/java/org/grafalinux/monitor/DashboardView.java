@@ -321,17 +321,11 @@ final class DashboardView extends View {
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
+    private static final float[] THICK = {0.07f, 0.11f, 0.16f};   // single ring thickness / diameter
+    private static final float[] BAND = {0.45f, 0.62f, 0.82f};    // stacked rings: share of the radius
+
     private Sensors.Sensor sensor(Model.Series s) {
         return table == null ? null : table.map.get(s.sensorId);
-    }
-
-    private String valueText(Model.Series s, Sensors.Sensor sn) {
-        if (sn == null) return "--";
-        if (st.fanPercent && sn.unit == Sensors.Unit.RPM) {
-            double mx = !Double.isNaN(s.max) ? s.max : (!Double.isNaN(sn.max) ? sn.max : 3000);
-            return String.format(Locale.US, "%.0f%%", 100.0 * sn.value / Math.max(1, mx));
-        }
-        return Sensors.format(sn.unit, sn.value, st.tempF);
     }
 
     private float tscale(Model.Widget w) {
@@ -373,6 +367,59 @@ final class DashboardView extends View {
         return false;
     }
 
+    private String iconName(Model.Series s, Sensors.Sensor sn) {
+        if (!st.showIcons || "none".equals(s.icon)) return null;
+        if (s.icon.length() > 0) return Icons.indexOf(s.icon) >= 0 ? s.icon : null;
+        return Icons.auto(sn);
+    }
+
+    private boolean anyIcon(Model.Widget w) {
+        for (int i = 0; i < w.series.size(); i++) {
+            Model.Series s = w.series.get(i);
+            if (iconName(s, sensor(s)) != null) return true;
+        }
+        return false;
+    }
+
+    // ---- fan speed: percent <-> RPM using the series min / max (RPM at 0 % and 100 %) ----
+    private double fanPct(Model.Series s, Sensors.Sensor sn, double v) {
+        if (sn.unit != Sensors.Unit.RPM) return v;
+        double mn = !Double.isNaN(s.min) ? s.min : 0;
+        double mx = !Double.isNaN(s.max) ? s.max : (!Double.isNaN(sn.max) ? sn.max : 3000);
+        if (mx <= mn) mx = mn + 1;
+        return 100.0 * (v - mn) / (mx - mn);
+    }
+
+    private double fanRpm(Model.Series s, Sensors.Sensor sn, double v) {
+        if (sn.unit == Sensors.Unit.RPM) return v;
+        if (Double.isNaN(s.min) || Double.isNaN(s.max) || s.max <= s.min) return Double.NaN;
+        return s.min + v / 100.0 * (s.max - s.min);
+    }
+
+    /** Value and unit as two strings. */
+    private String[] parts(Model.Series s, Sensors.Sensor sn) {
+        if (sn == null) return new String[]{"--", ""};
+        if (sn.fan) {
+            int mode = s.fanMode == 0 ? (st.fanPercent ? 1 : 2) : s.fanMode;
+            if (mode == 2) {
+                double rpm = fanRpm(s, sn, sn.value);
+                if (!Double.isNaN(rpm)) return new String[]{String.format(Locale.US, "%.0f", rpm), "RPM"};
+            }
+            return new String[]{String.format(Locale.US, "%.0f", fanPct(s, sn, sn.value)), "%"};
+        }
+        return Sensors.formatParts(sn.unit, sn.value, st.tempF);
+    }
+
+    private static String join(String[] p) {
+        if (p[1].length() == 0) return p[0];
+        if (p[1].equals("%") || p[1].startsWith("\u00B0")) return p[0] + p[1];
+        return p[0] + " " + p[1];
+    }
+
+    private String valueText(Model.Series s, Sensors.Sensor sn) {
+        return join(parts(s, sn));
+    }
+
     private double[] range(Model.Series s, Sensors.Sensor sn) {
         double mn = !Double.isNaN(s.min) ? s.min : (sn != null ? sn.min : 0);
         double mx;
@@ -386,19 +433,45 @@ final class DashboardView extends View {
         return rg;
     }
 
-    private float fraction(Model.Series s, Sensors.Sensor sn) {
+    /** 0..1 position of a value inside the series range (fans are measured in percent). */
+    private float norm(Model.Series s, Sensors.Sensor sn, double v) {
         if (sn == null) return 0;
-        double[] r = range(s, sn);
-        double f = (sn.value - r[0]) / (r[1] - r[0]);
+        double f;
+        if (sn.fan) {
+            f = fanPct(s, sn, v) / 100.0;
+        } else {
+            double[] r = range(s, sn);
+            f = (v - r[0]) / (r[1] - r[0]);
+        }
         return (float) Math.max(0, Math.min(1, f));
+    }
+
+    private float fraction(Model.Series s, Sensors.Sensor sn) {
+        return sn == null ? 0 : norm(s, sn, sn.value);
+    }
+
+    private static int lerp(int a, int b, double t) {
+        t = Math.max(0, Math.min(1, t));
+        int ar = Color.alpha(a), rr = Color.red(a), gg = Color.green(a), bb = Color.blue(a);
+        return Color.argb((int) (ar + (Color.alpha(b) - ar) * t), (int) (rr + (Color.red(b) - rr) * t),
+                (int) (gg + (Color.green(b) - gg) * t), (int) (bb + (Color.blue(b) - bb) * t));
     }
 
     private int colorFor(Model.Series s, Sensors.Sensor sn) {
         if (st.thEnabled && sn != null) {
             int i = Model.thIndex(sn.thKey);
             if (i >= 0) {
-                if (sn.value >= st.thCrit[i]) return st.critColor;
-                if (sn.value >= st.thWarn[i]) return st.warnColor;
+                float warn = st.thWarn[i];
+                float crit = Math.max(st.thCrit[i], warn + 1);
+                double v = sn.value;
+                if (v >= crit) return st.critColor;
+                if (v >= warn) {
+                    return st.thGradient ? lerp(st.warnColor, st.critColor, (v - warn) / (crit - warn)) : st.warnColor;
+                }
+                if (st.thGradient) {
+                    float start = warn * 0.75f;
+                    if (v > start) return lerp(s.color, st.warnColor, (v - start) / (warn - start));
+                }
             }
         }
         return s.color;
@@ -423,6 +496,71 @@ final class DashboardView extends View {
             x = (l + r) / 2f;
         }
         c.drawText(s, x, baseline, textP);
+    }
+
+    /** Draws a number with its unit in a smaller size next to it, fitted into [l, r]. */
+    private void drawParts(Canvas c, String[] p, float l, float r, float baseline, int align, float size,
+                           int color, boolean bold) {
+        if (size < 1) return;
+        boolean unit = p[1].length() > 0;
+        float wn = 0, wu = 0, g = 0;
+        for (int pass = 0; pass < 2; pass++) {
+            textP.setFakeBoldText(bold);
+            textP.setTextSize(size);
+            wn = textP.measureText(p[0]);
+            g = unit ? size * 0.08f : 0;
+            wu = 0;
+            if (unit) {
+                textP.setTextSize(size * 0.5f);
+                wu = textP.measureText(p[1]);
+            }
+            float total = wn + g + wu;
+            if (total <= r - l || total <= 0) break;
+            size *= (r - l) / total;
+        }
+        float total = wn + g + wu;
+        float x = align == 0 ? l : (align == 2 ? r - total : (l + r - total) / 2f);
+        textP.setColor(color);
+        textP.setTextAlign(Paint.Align.LEFT);
+        textP.setTextSize(size);
+        c.drawText(p[0], x, baseline, textP);
+        if (unit) {
+            textP.setFakeBoldText(false);
+            textP.setTextSize(size * 0.5f);
+            c.drawText(p[1], x + wn + g, baseline, textP);
+        }
+        textP.setFakeBoldText(false);
+    }
+
+    /** "icon label" on one line, aligned like the rest of the widget. */
+    private void drawIconLabel(Canvas c, String ic, String lab, float l, float r, float baseline,
+                               int align, float size) {
+        if (ic == null && lab.length() == 0) return;
+        float is = size * 1.15f;
+        float gapW = (ic != null && lab.length() > 0) ? size * 0.3f : 0;
+        float tw = 0;
+        if (lab.length() > 0) {
+            textP.setTextSize(size);
+            tw = textP.measureText(lab);
+        }
+        float total = (ic != null ? is : 0) + gapW + tw;
+        float k = total > r - l && total > 0 ? (r - l) / total : 1f;
+        size *= k;
+        is *= k;
+        gapW *= k;
+        tw *= k;
+        total *= k;
+        float x = align == 0 ? l : (align == 2 ? r - total : (l + r - total) / 2f);
+        if (ic != null) {
+            Icons.draw(c, ic, x, baseline - is * 0.82f, is, st.iconColor);
+            x += is + gapW;
+        }
+        if (lab.length() > 0) {
+            textP.setColor(st.labelColor);
+            textP.setTextSize(size);
+            textP.setTextAlign(Paint.Align.LEFT);
+            c.drawText(lab, x, baseline, textP);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -509,32 +647,36 @@ final class DashboardView extends View {
 
     private void drawWidget(Canvas c, Model.Widget w, RectF r) {
         float ts = tscale(w);
+        float cr = w.rounded ? 10 * d : 0;
         fill.setStyle(Paint.Style.FILL);
         fill.setColor(0x14FFFFFF);
-        c.drawRoundRect(r, 10 * d, 10 * d, fill);
+        c.drawRoundRect(r, cr, cr, fill);
         if (editing) {
             stroke.setStrokeWidth(1.5f * d);
             stroke.setColor(0xAA4FC3F7);
-            c.drawRoundRect(r, 10 * d, 10 * d, stroke);
+            c.drawRoundRect(r, cr, cr, stroke);
         }
-        float ip = 8 * d;
+        float ip = st.innerPad * d;
         float l = r.left + ip, t = r.top + ip, rr = r.right - ip, b = r.bottom - ip;
+        if (rr - l < 4 || b - t < 4) return;
+        float top0 = t;
 
-        if (w.title.length() > 0) {
+        // text-only widgets keep a title strip; graphs never shrink for text (the title floats on top)
+        boolean textType = w.type == Model.NUMBER || w.type == Model.TEXT;
+        if (w.title.length() > 0 && textType) {
             float tsz = size(13 * d, (b - t) * 0.2f, ts);
             textP.setColor(w.titleColor != 0 ? w.titleColor : st.fontColor);
             textP.setFakeBoldText(true);
             drawText(c, w.title, l, rr, t + tsz, w.align, tsz);
             textP.setFakeBoldText(false);
             t += tsz * 1.5f;
+            if (b - t < 4) return;
         }
-        if (rr - l < 4 || b - t < 4) return;
 
         if (w.type == Model.TEXT) {
             drawTextWidget(c, w, l, t, rr, b);
             return;
         }
-
         if (w.series.isEmpty()) {
             textP.setColor(0xFF777777);
             drawText(c, "No sensors", l, rr, (t + b) / 2f, 1, 12 * d);
@@ -546,7 +688,7 @@ final class DashboardView extends View {
                 drawNumber(c, w, l, t, rr, b);
                 break;
             case Model.BAR:
-                drawBar(c, w, l, t, rr, b);
+                drawBars(c, w, l, t, rr, b);
                 break;
             case Model.LINE:
                 drawChart(c, w, l, t, rr, b, false);
@@ -555,7 +697,7 @@ final class DashboardView extends View {
                 drawChart(c, w, l, t, rr, b, true);
                 break;
             case Model.DONUT:
-                drawRings(c, w, l, t, rr, b, -90, 360);
+                drawDonut(c, w, l, t, rr, b);
                 break;
             case Model.PIE:
                 drawPie(c, w, l, t, rr, b);
@@ -564,31 +706,54 @@ final class DashboardView extends View {
                 drawGauge(c, w, l, t, rr, b);
                 break;
         }
+        if (w.title.length() > 0 && !textType) drawTitleChip(c, w, l, top0, rr, ts);
+    }
+
+    /** Small label floating over the top of a graph (the graph itself is not resized). */
+    private void drawTitleChip(Canvas c, Model.Widget w, float l, float top, float r, float ts) {
+        float tsz = size(11 * d, 20 * d, ts);
+        textP.setFakeBoldText(true);
+        textP.setTextSize(tsz);
+        float tw = textP.measureText(w.title);
+        float avail = (r - l) - 10 * d;
+        if (tw > avail && tw > 0) {
+            tsz *= avail / tw;
+            textP.setTextSize(tsz);
+            tw = textP.measureText(w.title);
+        }
+        float chW = tw + 10 * d;
+        float chH = tsz * 1.55f;
+        float x0 = w.align == 0 ? l : (w.align == 2 ? r - chW : (l + r - chW) / 2f);
+        float y0 = top + 2 * d;
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(0x66000000);
+        tmp.set(x0, y0, x0 + chW, y0 + chH);
+        c.drawRoundRect(tmp, w.rounded ? chH / 2f : 2 * d, w.rounded ? chH / 2f : 2 * d, fill);
+        textP.setColor(w.titleColor != 0 ? w.titleColor : st.fontColor);
+        textP.setTextAlign(Paint.Align.LEFT);
+        c.drawText(w.title, x0 + 5 * d, y0 + chH / 2f + tsz * 0.35f, textP);
+        textP.setFakeBoldText(false);
     }
 
     // ---- number ----
     private void drawNumber(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         int n = w.series.size();
         float ts = tscale(w);
-        boolean lbl = anyLabel(w);
+        boolean lbl = anyLabel(w) || anyIcon(w);
         float band = (b - t) / n;
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
             Sensors.Sensor sn = sensor(s);
             float top = t + i * band;
-            float vs = size(34 * d, band * (lbl ? 0.5f : 0.7f), ts);
-            float ls = size(12 * d, band * 0.22f, ts);
-            textP.setColor(colorFor(s, sn));
-            textP.setFakeBoldText(true);
+            float vs = size(40 * d, band * (lbl ? 0.55f : 0.8f), ts);
+            float ls = size(13 * d, band * 0.24f, ts);
+            int col = colorFor(s, sn);
             if (lbl) {
-                drawText(c, valueText(s, sn), l, r, top + band * 0.12f + vs, w.align, vs);
+                drawParts(c, parts(s, sn), l, r, top + band * 0.1f + vs, w.align, vs, col, true);
+                drawIconLabel(c, iconName(s, sn), labelFor(w, s, sn), l, r,
+                        top + band * 0.1f + vs + ls * 1.4f, w.align, ls);
             } else {
-                drawText(c, valueText(s, sn), l, r, top + band / 2f + vs * 0.35f, w.align, vs);
-            }
-            textP.setFakeBoldText(false);
-            if (lbl) {
-                textP.setColor(st.labelColor);
-                drawText(c, labelFor(w, s, sn), l, r, top + band * 0.12f + vs + ls * 1.3f, w.align, ls);
+                drawParts(c, parts(s, sn), l, r, top + band / 2f + vs * 0.35f, w.align, vs, col, true);
             }
         }
     }
@@ -597,115 +762,229 @@ final class DashboardView extends View {
     private void drawGauge(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         int n = w.series.size();
         if (w.stacked && n > 1) {
-            drawStackedGauge(c, w, l, t, r, b);
+            drawRings(c, w, l, t, r, b, 135, 270);
             return;
         }
         float ts = tscale(w);
-        boolean lbl = anyLabel(w);
         int cols = n <= 3 ? n : (int) Math.ceil(Math.sqrt(n));
         int rows = (n + cols - 1) / cols;
         float cw = (r - l) / cols;
         float ch = (b - t) / rows;
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
-            Sensors.Sensor sn = sensor(s);
             float cl = l + (i % cols) * cw;
             float ct = t + (i / cols) * ch;
-            float ls = lbl ? size(12 * d, ch * 0.18f, ts) : 0;
-            float reserve = lbl ? ls * 1.5f : 0;
-            float dia = Math.max(8 * d, Math.min(cw, ch - reserve));
-            float sw = Math.max(3 * d, dia * 0.11f);
-            float cx = cl + cw / 2f;
-            float cy = ct + (ch - reserve) / 2f;
-            tmp.set(cx - dia / 2f + sw / 2f, cy - dia / 2f + sw / 2f,
-                    cx + dia / 2f - sw / 2f, cy + dia / 2f - sw / 2f);
-
-            stroke.setStrokeWidth(sw);
-            stroke.setStrokeCap(Paint.Cap.ROUND);
-            stroke.setColor(0x33FFFFFF);
-            c.drawArc(tmp, 135, 270, false, stroke);
-            float f = fraction(s, sn);
-            if (f > 0.005f) {
-                stroke.setColor(colorFor(s, sn));
-                c.drawArc(tmp, 135, 270 * f, false, stroke);
-            }
-            stroke.setStrokeCap(Paint.Cap.BUTT);
-
-            float vsz = size(dia * 0.26f, dia * 0.32f, ts);
-            textP.setColor(st.fontColor);
-            textP.setFakeBoldText(true);
-            drawText(c, valueText(s, sn), cx - dia * 0.36f, cx + dia * 0.36f, cy + vsz * 0.35f, 1, vsz);
-            textP.setFakeBoldText(false);
-            if (lbl) {
-                textP.setColor(st.labelColor);
-                drawText(c, labelFor(w, s, sn), cl + 2 * d, cl + cw - 2 * d, ct + ch - ls * 0.3f, 1, ls);
-            }
+            float dia = Math.max(8 * d, Math.min(cw, ch));
+            drawSingleRing(c, w, s, sensor(s), cl + cw / 2f, ct + ch / 2f, dia, 135, 270, ts);
         }
     }
 
-    /** Concentric rings: the first sensor is the outer ring, later ones go inwards. */
-    private void drawRings(Canvas c, Model.Widget w, float l, float t, float r, float b,
-                           float start, float sweepMax) {
+    /** One ring (gauge: 270 degrees, donut: full circle) with icon, value, unit and label inside. */
+    private void drawSingleRing(Canvas c, Model.Widget w, Model.Series s, Sensors.Sensor sn, float cx,
+                                float cy, float dia, float start, float sweepMax, float ts) {
+        float sw = Math.max(2 * d, dia * THICK[Math.max(0, Math.min(2, w.ringThick))]);
+        tmp.set(cx - dia / 2f + sw / 2f, cy - dia / 2f + sw / 2f, cx + dia / 2f - sw / 2f, cy + dia / 2f - sw / 2f);
+        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+        stroke.setStrokeWidth(sw);
+        stroke.setStrokeCap(sweepMax < 360 ? cap : Paint.Cap.BUTT);
+        stroke.setColor(0x33FFFFFF);
+        c.drawArc(tmp, start, sweepMax, false, stroke);
+        float f = fraction(s, sn);
+        if (f > 0.005f) {
+            stroke.setStrokeCap(cap);
+            stroke.setColor(colorFor(s, sn));
+            c.drawArc(tmp, start, sweepMax * f, false, stroke);
+        }
+        stroke.setStrokeCap(Paint.Cap.BUTT);
+        drawCenter(c, w, s, sn, cx, cy, dia, sw, sweepMax < 360, ts);
+    }
+
+    /**
+     * Inside a ring: icon above the value (unit drawn smaller), label below. In a gauge the label goes
+     * into the open gap at the bottom. When the ring is too small, the label and then the icon are dropped.
+     */
+    private void drawCenter(Canvas c, Model.Widget w, Model.Series s, Sensors.Sensor sn, float cx, float cy,
+                            float dia, float sw, boolean gapLabel, float ts) {
+        float inner = dia - 2 * sw;
+        if (inner < 10 * d) return;
+        String lab = labelFor(w, s, sn);
+        String ic = iconName(s, sn);
+        boolean hasIcon = ic != null;
+        boolean labelInStack = lab.length() > 0 && !gapLabel;
+        float vs = size(inner * 0.36f, inner * 0.42f, ts);
+        float is = vs * 0.75f;
+        float ls = size(inner * 0.15f, inner * 0.2f, ts);
+        float avail = inner * 0.86f;
+        float need;
+        while (true) {
+            need = vs * 1.05f + (hasIcon ? is * 1.15f : 0) + (labelInStack ? ls * 1.4f : 0);
+            if (need <= avail) break;
+            if (labelInStack) {
+                labelInStack = false;
+                continue;
+            }
+            if (hasIcon) {
+                hasIcon = false;
+                continue;
+            }
+            float k = avail / need;
+            vs *= k;
+            is *= k;
+            ls *= k;
+            need = avail;
+            break;
+        }
+        float y = cy - need / 2f + (gapLabel ? -dia * 0.03f : 0);
+        if (hasIcon) {
+            Icons.draw(c, ic, cx - is / 2f, y, is, st.iconColor);
+            y += is * 1.15f;
+        }
+        drawParts(c, parts(s, sn), cx - inner * 0.46f, cx + inner * 0.46f, y + vs * 0.8f, 1, vs,
+                st.fontColor, true);
+        y += vs * 1.05f;
+        textP.setColor(st.labelColor);
+        if (labelInStack) {
+            drawText(c, lab, cx - inner * 0.46f, cx + inner * 0.46f, y + ls * 0.95f, 1, ls);
+        } else if (gapLabel && lab.length() > 0) {
+            float rad = dia / 2f;
+            drawText(c, lab, cx - rad * 0.5f, cx + rad * 0.5f, cy + rad * 0.86f, 1, size(rad * 0.22f, rad * 0.26f, ts));
+        }
+    }
+
+    // ---- donut ----
+    private void drawDonut(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         int n = w.series.size();
         float ts = tscale(w);
-        boolean lbl = anyLabel(w);
-        float ls = lbl ? size(11 * d, (b - t) * 0.14f, ts) : 0;
-        float legendH = lbl ? ls * 1.8f : 0;
-        float areaH = (b - t) - legendH;
-        float dia = Math.max(8 * d, Math.min(r - l, areaH));
+        float dia = Math.max(8 * d, Math.min(r - l, b - t));
         float cx = (l + r) / 2f;
-        float cy = t + areaH / 2f;
-        float rad0 = dia / 2f;
-        float pitch = n == 1 ? rad0 * 0.32f : (rad0 * 0.62f) / n;
-        float sw = Math.max(2 * d, pitch * 0.72f);
+        float cy = (t + b) / 2f;
+        if (n == 1) {
+            Model.Series s = w.series.get(0);
+            drawSingleRing(c, w, s, sensor(s), cx, cy, dia, -90, 360, ts);
+        } else if (w.stacked) {
+            drawRings(c, w, l, t, r, b, -90, 360);
+        } else {
+            drawDonutSegments(c, w, l, t, r, b);
+        }
+    }
 
-        stroke.setStrokeCap(sweepMax < 360 ? Paint.Cap.ROUND : Paint.Cap.BUTT);
+    /** One ring cut into slices, one slice per sensor (parts of a whole). */
+    private void drawDonutSegments(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+        int n = w.series.size();
+        float ts = tscale(w);
+        float dia = Math.max(8 * d, Math.min(r - l, b - t));
+        float cx = (l + r) / 2f;
+        float cy = (t + b) / 2f;
+        float sw = Math.max(3 * d, dia * THICK[Math.max(0, Math.min(2, w.ringThick))] * 1.3f);
+        float rad = dia / 2f - sw / 2f;
+        tmp.set(cx - rad, cy - rad, cx + rad, cy + rad);
+        stroke.setStrokeWidth(sw);
+        stroke.setStrokeCap(Paint.Cap.BUTT);
+        stroke.setColor(0x33FFFFFF);
+        c.drawArc(tmp, 0, 360, false, stroke);
+
+        double sum = 0;
+        for (int i = 0; i < n; i++) {
+            Sensors.Sensor sn = sensor(w.series.get(i));
+            if (sn != null && sn.value > 0) sum += sn.value;
+        }
+        if (sum > 0) {
+            float gapDeg = (float) Math.toDegrees((w.ringGap * d) / Math.max(1f, rad));
+            float a0 = -90;
+            for (int i = 0; i < n; i++) {
+                Model.Series s = w.series.get(i);
+                Sensors.Sensor sn = sensor(s);
+                if (sn == null || sn.value <= 0) continue;
+                float sweep = (float) (360.0 * sn.value / sum);
+                if (sweep > gapDeg + 0.5f) {
+                    stroke.setColor(s.color);
+                    c.drawArc(tmp, a0 + gapDeg / 2f, sweep - gapDeg, false, stroke);
+                }
+                a0 += sweep;
+            }
+            // total in the middle when every slice has the same unit
+            Sensors.Sensor first = sensor(w.series.get(0));
+            boolean same = first != null;
+            for (int i = 1; i < n && same; i++) {
+                Sensors.Sensor o = sensor(w.series.get(i));
+                same = o != null && o.unit == first.unit;
+            }
+            if (same) {
+                float inner = dia - 2 * sw;
+                float vs = size(inner * 0.3f, inner * 0.36f, ts);
+                drawParts(c, Sensors.formatParts(first.unit, sum, st.tempF), cx - inner * 0.46f, cx + inner * 0.46f,
+                        cy + vs * 0.35f, 1, vs, st.fontColor, true);
+            }
+        }
+        drawLegend(c, w, l, r, b, ts, true);
+    }
+
+    /** Concentric rings: the first sensor is the outer ring, later ones go inwards. */
+    private void drawRings(Canvas c, Model.Widget w, float l, float t, float r, float b, float start,
+                           float sweepMax) {
+        int n = w.series.size();
+        float ts = tscale(w);
+        float dia = Math.max(8 * d, Math.min(r - l, b - t));
+        float cx = (l + r) / 2f;
+        float cy = (t + b) / 2f;
+        float rad0 = dia / 2f;
+        float band = rad0 * BAND[Math.max(0, Math.min(2, w.ringThick))];
+        float pitch = band / n;
+        float sw = Math.max(2 * d, pitch - w.ringGap * d);
+        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
             Sensors.Sensor sn = sensor(s);
-            float rad = rad0 - sw / 2f - i * pitch - rad0 * 0.02f;
-            if (rad < sw) break;
+            float rad = rad0 - sw / 2f - i * pitch;
+            if (rad <= sw * 0.5f) break;
             tmp.set(cx - rad, cy - rad, cx + rad, cy + rad);
             stroke.setStrokeWidth(sw);
+            stroke.setStrokeCap(sweepMax < 360 ? cap : Paint.Cap.BUTT);
             stroke.setColor(0x33FFFFFF);
             c.drawArc(tmp, start, sweepMax, false, stroke);
             float f = fraction(s, sn);
             if (f > 0.005f) {
+                stroke.setStrokeCap(cap);
                 stroke.setColor(colorFor(s, sn));
                 c.drawArc(tmp, start, sweepMax * f, false, stroke);
             }
         }
         stroke.setStrokeCap(Paint.Cap.BUTT);
 
-        // values in the middle, one line per ring, in the ring's colour
-        float boxH = rad0 * 0.62f;
-        float lineH = Math.min(boxH / n, size(n == 1 ? 30 * d : 16 * d, boxH, ts));
-        float y0 = cy - (lineH * n) / 2f;
-        textP.setFakeBoldText(true);
-        for (int i = 0; i < n; i++) {
-            Model.Series s = w.series.get(i);
-            Sensors.Sensor sn = sensor(s);
-            textP.setColor(colorFor(s, sn));
-            drawText(c, valueText(s, sn), cx - rad0 * 0.34f, cx + rad0 * 0.34f, y0 + (i + 0.8f) * lineH, 1, lineH * 0.85f);
+        // one line per ring in the middle: icon (if there is room) and value, in the ring's colour
+        float ri = rad0 - band - 2 * d;
+        if (ri > 8 * d) {
+            float boxH = ri * 1.5f;
+            float lineH = Math.min(boxH / n, size(18 * d, boxH, ts));
+            float y0 = cy - (lineH * n) / 2f;
+            for (int i = 0; i < n; i++) {
+                Model.Series s = w.series.get(i);
+                Sensors.Sensor sn = sensor(s);
+                float base = y0 + (i + 0.5f) * lineH + lineH * 0.28f;
+                String ic = iconName(s, sn);
+                float x0 = cx - ri * 0.75f;
+                float x1 = cx + ri * 0.75f;
+                int col = colorFor(s, sn);
+                if (ic != null && lineH >= 11 * d) {
+                    float is = lineH * 0.8f;
+                    Icons.draw(c, ic, x0, y0 + i * lineH + (lineH - is) / 2f, is, col);
+                    x0 += is * 1.15f;
+                }
+                drawParts(c, parts(s, sn), x0, x1, base, ic != null && lineH >= 11 * d ? 2 : 1,
+                        lineH * 0.8f, col, true);
+            }
         }
-        textP.setFakeBoldText(false);
-
-        if (lbl) drawLegend(c, w, l, r, b, ls, false);
+        drawLegend(c, w, l, r, b, ts, false);
     }
 
-    private void drawStackedGauge(Canvas c, Model.Widget w, float l, float t, float r, float b) {
-        drawRings(c, w, l, t, r, b, 135, 270);
-    }
-
-    /** Pie: one sensor = its share of the maximum; several sensors = slices of their sum. */
+    // ---- pie ----
     private void drawPie(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         int n = w.series.size();
         float ts = tscale(w);
-        float ls = size(11 * d, (b - t) * 0.14f, ts);
-        float areaH = (b - t) - ls * 1.8f;
-        float dia = Math.max(8 * d, Math.min(r - l, areaH));
+        float dia = Math.max(8 * d, Math.min(r - l, b - t));
         float cx = (l + r) / 2f;
-        float cy = t + areaH / 2f;
+        float cy = (t + b) / 2f;
         float rad = dia / 2f - d;
         tmp.set(cx - rad, cy - rad, cx + rad, cy + rad);
         fill.setStyle(Paint.Style.FILL);
@@ -744,10 +1023,10 @@ final class DashboardView extends View {
                 }
             }
         }
-        drawLegend(c, w, l, r, b, ls, true);
+        drawLegend(c, w, l, r, b, ts, true);
     }
 
-    /** Free text; each line is fitted to the widget. */
+    // ---- text widget ----
     private void drawTextWidget(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         if (w.text.length() == 0) {
             textP.setColor(0xFF777777);
@@ -764,61 +1043,19 @@ final class DashboardView extends View {
         }
     }
 
-    // ---- bars ----
-    private void drawBar(Canvas c, Model.Widget w, float l, float t, float r, float b) {
+    // ---- bars (horizontal or vertical) ----
+    private void drawBars(Canvas c, Model.Widget w, float l, float t, float r, float b) {
         int n = w.series.size();
         float ts = tscale(w);
-        boolean lbl = anyLabel(w);
-        if (w.stacked || !lbl) {
-            drawInsideBars(c, w, l, t, r, b, ts);
-            return;
-        }
-        float band = (b - t) / n;
-        float split = l + (r - l) * 0.62f;
-        for (int i = 0; i < n; i++) {
-            Model.Series s = w.series.get(i);
-            Sensors.Sensor sn = sensor(s);
-            float top = t + i * band;
-            float ls = size(13 * d, band * 0.38f, ts);
-            float bh = Math.max(4 * d, Math.min(band * 0.32f, 14 * d));
-            float baseline = top + ls;
-
-            textP.setColor(st.labelColor);
-            drawText(c, labelFor(w, s, sn), l, split - 4 * d, baseline, 0, ls);
-            textP.setColor(st.fontColor);
-            textP.setFakeBoldText(true);
-            drawText(c, valueText(s, sn), split, r, baseline, 2, ls);
-            textP.setFakeBoldText(false);
-
-            float y = top + ls * 1.4f;
-            fill.setStyle(Paint.Style.FILL);
-            fill.setColor(0x33FFFFFF);
-            tmp.set(l, y, r, y + bh);
-            c.drawRoundRect(tmp, bh / 2f, bh / 2f, fill);
-            float f = fraction(s, sn);
-            if (f > 0.002f) {
-                fill.setColor(colorFor(s, sn));
-                float fw = Math.max(bh, (r - l) * f);
-                tmp.set(l, y, l + Math.min(fw, r - l), y + bh);
-                c.drawRoundRect(tmp, bh / 2f, bh / 2f, fill);
-            }
-        }
-    }
-
-    /** Bars that use all the space, with the value (and label) drawn inside the bar. */
-    private void drawInsideBars(Canvas c, Model.Widget w, float l, float t, float r, float b, float ts) {
-        int n = w.series.size();
+        boolean vert = w.vertical;
         float gapPx = w.stacked ? 0 : 3 * d;
-        float bh = ((b - t) - gapPx * (n - 1)) / n;
-        float cap = 48 * d * Math.max(1f, ts);
-        if (bh > cap) bh = cap;
-        float total = n * bh + gapPx * (n - 1);
-        float y0 = t + ((b - t) - total) / 2f;
-        float rad = w.stacked ? 0 : Math.min(bh / 2f, 8 * d);
+        float avail = vert ? (r - l) : (b - t);
+        float bs = Math.max(2 * d, (avail - gapPx * (n - 1)) / n);          // bar thickness
+        float rad = w.rounded ? (w.stacked ? 0 : Math.min(bs / 2f, 10 * d)) : 0;
 
         boolean clipped = false;
-        if (w.stacked) {
-            tmp.set(l, y0, r, y0 + total);
+        if (w.stacked && w.rounded) {
+            tmp.set(l, t, r, b);
             path.reset();
             path.addRoundRect(tmp, 8 * d, 8 * d, Path.Direction.CW);
             c.save();
@@ -828,66 +1065,135 @@ final class DashboardView extends View {
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
             Sensors.Sensor sn = sensor(s);
-            float y = y0 + i * (bh + gapPx);
+            float a0 = (vert ? l : t) + i * (bs + gapPx);
+            float x0 = vert ? a0 : l;
+            float x1 = vert ? a0 + bs : r;
+            float y0 = vert ? t : a0;
+            float y1 = vert ? b : a0 + bs;
+
             fill.setStyle(Paint.Style.FILL);
             fill.setColor(0x33FFFFFF);
-            tmp.set(l, y, r, y + bh);
+            tmp.set(x0, y0, x1, y1);
             c.drawRoundRect(tmp, rad, rad, fill);
 
             int col = colorFor(s, sn);
-            float fillRight = l;
             float f = fraction(s, sn);
-            if (sn != null && f > 0.002f) {
-                float fw = w.stacked ? (r - l) * f : Math.max(Math.min(bh, r - l), (r - l) * f);
-                fill.setColor(col);
-                tmp.set(l, y, l + fw, y + bh);
-                c.drawRoundRect(tmp, rad, rad, fill);
-                fillRight = l + fw;
+            boolean has = sn != null && f > 0.002f;
+            float edge;                       // horizontal: right edge of the fill; vertical: its top edge
+            if (!vert) {
+                float full = r - l;
+                float fw = has ? (w.stacked ? full * f : Math.max(Math.min(bs, full), full * f)) : 0;
+                edge = x0 + fw;
+                if (has) {
+                    fill.setColor(col);
+                    tmp.set(x0, y0, edge, y1);
+                    c.drawRoundRect(tmp, rad, rad, fill);
+                }
+            } else {
+                float full = b - t;
+                float fh = has ? (w.stacked ? full * f : Math.max(Math.min(bs, full), full * f)) : 0;
+                edge = y1 - fh;
+                if (has) {
+                    fill.setColor(col);
+                    tmp.set(x0, edge, x1, y1);
+                    c.drawRoundRect(tmp, rad, rad, fill);
+                }
             }
-            float tsz = size(14 * d, bh * 0.62f, ts);
-            drawBarText(c, w, labelFor(w, s, sn), valueText(s, sn), l, r, y, bh, fillRight, col, tsz);
+
+            if (!vert) {
+                float tsz = size(14 * d, bs * 0.62f, ts);
+                drawBarText(c, w, iconName(s, sn), labelFor(w, s, sn), valueText(s, sn), l, r, y0, bs, edge, col, tsz);
+            } else {
+                drawVBarText(c, w, s, sn, x0, x1, y0, y1, edge, col, ts);
+            }
 
             if (w.stacked && i < n - 1) {
                 stroke.setStrokeWidth(Math.max(1f, d));
-                stroke.setColor(st.bgColor);
-                c.drawLine(l, y + bh, r, y + bh, stroke);
+                stroke.setColor(0xFF000000);
+                if (!vert) c.drawLine(l, y1, r, y1, stroke);
+                else c.drawLine(x1, t, x1, b, stroke);
             }
         }
         if (clipped) c.restore();
     }
 
-    /** Draws text over a bar twice (clipped): dark-or-light over the fill, normal over the track. */
-    private void drawBarText(Canvas c, Model.Widget w, String label, String value, float l, float r,
+    private static int onColor(int fill) {
+        float lum = (0.299f * Color.red(fill) + 0.587f * Color.green(fill) + 0.114f * Color.blue(fill)) / 255f;
+        return lum > 0.55f ? 0xFF000000 : 0xFFFFFFFF;
+    }
+
+    /** Text inside a horizontal bar, drawn twice (clipped): dark-or-light over the fill, normal over the track. */
+    private void drawBarText(Canvas c, Model.Widget w, String ic, String label, String value, float l, float r,
                              float y, float bh, float fillRight, int fillColor, float size) {
         float pad2 = Math.min(6 * d, bh * 0.3f);
         float base = y + bh / 2f + size * 0.35f;
-        float lum = (0.299f * Color.red(fillColor) + 0.587f * Color.green(fillColor)
-                + 0.114f * Color.blue(fillColor)) / 255f;
-        int onFill = lum > 0.55f ? 0xFF000000 : 0xFFFFFFFF;
         if (fillRight > l + 0.5f) {
             c.save();
             c.clipRect(l, y, fillRight, y + bh);
-            textP.setColor(onFill);
-            barTextLine(c, w, label, value, l + pad2, r - pad2, base, size);
+            barTextLine(c, w, ic, label, value, l + pad2, r - pad2, base, size, onColor(fillColor));
             c.restore();
         }
         if (fillRight < r - 0.5f) {
             c.save();
             c.clipRect(fillRight, y, r, y + bh);
-            textP.setColor(st.fontColor);
-            barTextLine(c, w, label, value, l + pad2, r - pad2, base, size);
+            barTextLine(c, w, ic, label, value, l + pad2, r - pad2, base, size, st.fontColor);
             c.restore();
         }
     }
 
-    private void barTextLine(Canvas c, Model.Widget w, String label, String value, float l, float r,
-                             float base, float size) {
+    private void barTextLine(Canvas c, Model.Widget w, String ic, String label, String value, float l, float r,
+                             float base, float size, int color) {
+        textP.setColor(color);
+        float x = l;
+        if (ic != null) {
+            float is = size * 1.15f;
+            Icons.draw(c, ic, x, base - is * 0.82f, is, color);
+            x += is + size * 0.3f;
+        }
         if (label.length() > 0) {
-            float split = l + (r - l) * 0.6f;
-            drawText(c, label, l, split - 4 * d, base, 0, size);
+            float split = x + (r - x) * 0.6f;
+            drawText(c, label, x, split - 4 * d, base, 0, size);
             drawText(c, value, split, r, base, 2, size);
+        } else if (ic != null) {
+            drawText(c, value, x, r, base, 2, size);
         } else {
             drawText(c, value, l, r, base, w.align, size);
+        }
+    }
+
+    /** Text inside a vertical bar: value at the top, icon and label at the bottom. */
+    private void drawVBarText(Canvas c, Model.Widget w, Model.Series s, Sensors.Sensor sn, float x0, float x1,
+                              float y0, float y1, float fillTop, int fillColor, float ts) {
+        float tsz = size(13 * d, Math.max(6 * d, (x1 - x0) * 0.38f), ts);
+        String value = valueText(s, sn);
+        String lab = labelFor(w, s, sn);
+        String ic = iconName(s, sn);
+        if (fillTop < y1 - 0.5f) {
+            c.save();
+            c.clipRect(x0, fillTop, x1, y1);
+            vbarLines(c, value, lab, ic, x0, x1, y0, y1, tsz, onColor(fillColor));
+            c.restore();
+        }
+        if (fillTop > y0 + 0.5f) {
+            c.save();
+            c.clipRect(x0, y0, x1, fillTop);
+            vbarLines(c, value, lab, ic, x0, x1, y0, y1, tsz, st.fontColor);
+            c.restore();
+        }
+    }
+
+    private void vbarLines(Canvas c, String value, String lab, String ic, float x0, float x1, float y0, float y1,
+                           float tsz, int color) {
+        float pad2 = 3 * d;
+        textP.setColor(color);
+        drawText(c, value, x0 + pad2, x1 - pad2, y0 + tsz * 1.25f, 1, tsz);
+        float yb = y1 - pad2;
+        if (lab.length() > 0) {
+            drawText(c, lab, x0 + pad2, x1 - pad2, yb, 1, tsz * 0.85f);
+            yb -= tsz * 1.1f;
+        }
+        if (ic != null && (y1 - y0) > tsz * 5) {
+            Icons.draw(c, ic, (x0 + x1) / 2f - tsz * 0.5f, yb - tsz, tsz, color);
         }
     }
 
@@ -895,14 +1201,10 @@ final class DashboardView extends View {
     private void drawChart(Canvas c, Model.Widget w, float l, float t, float r, float b, boolean area) {
         int n = w.series.size();
         float ts = tscale(w);
-        float ls = size(11 * d, (b - t) * 0.16f, ts);
-        float cb = b - ls * 1.7f;
-        if (cb - t < 6 * d) return;
-
         stroke.setStrokeWidth(1);
         stroke.setColor(0x22FFFFFF);
         for (int k = 0; k <= 3; k++) {
-            float y = t + (cb - t) * k / 3f;
+            float y = t + (b - t) * k / 3f;
             c.drawLine(l, y, r, y, stroke);
         }
 
@@ -911,15 +1213,12 @@ final class DashboardView extends View {
             Model.Series s = w.series.get(i);
             Sensors.Sensor sn = sensor(s);
             History.Ring ring = hist.ring(s.sensorId);
-            if (ring == null || ring.count < 2) continue;
-            double[] g = range(s, sn);
-            double mn = g[0], mx = g[1];
+            if (sn == null || ring == null || ring.count < 2) continue;
             path.reset();
             float firstX = 0, lastX = 0;
             for (int k = 0; k < ring.count; k++) {
                 float x = r - (ring.count - 1 - k) * step;
-                float f = (float) Math.max(0, Math.min(1, (ring.get(k) - mn) / (mx - mn)));
-                float y = cb - f * (cb - t);
+                float y = b - norm(s, sn, ring.get(k)) * (b - t);
                 if (k == 0) {
                     path.moveTo(x, y);
                     firstX = x;
@@ -931,8 +1230,8 @@ final class DashboardView extends View {
             if (area) {
                 path2.reset();
                 path2.addPath(path);
-                path2.lineTo(lastX, cb);
-                path2.lineTo(firstX, cb);
+                path2.lineTo(lastX, b);
+                path2.lineTo(firstX, b);
                 path2.close();
                 fill.setStyle(Paint.Style.FILL);
                 fill.setColor((s.color & 0x00FFFFFF) | 0x55000000);
@@ -943,24 +1242,43 @@ final class DashboardView extends View {
             stroke.setColor(s.color);
             c.drawPath(path, stroke);
         }
-        drawLegend(c, w, l, r, b, ls, true);
+        drawLegend(c, w, l, r, b, ts, true);
     }
 
-    /** One cell per series along the bottom: colour dot, label (if enabled) and optionally the value. */
-    private void drawLegend(Canvas c, Model.Widget w, float l, float r, float b, float ls, boolean withValue) {
+    /**
+     * Legend chips floating over the bottom of the graph (they do not resize it): the sensor's icon (or a
+     * colour dot) in the series colour, then its label and, optionally, its value.
+     */
+    private void drawLegend(Canvas c, Model.Widget w, float l, float r, float b, float ts, boolean withValue) {
         int n = w.series.size();
+        float ls = size(10 * d, 16 * d, ts);
+        float chH = ls * 1.7f;
         float cw = (r - l) / n;
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
             Sensors.Sensor sn = sensor(s);
             String lab = labelFor(w, s, sn);
+            String ic = iconName(s, sn);
             String txt = withValue ? (lab.length() > 0 ? lab + " " + valueText(s, sn) : valueText(s, sn)) : lab;
-            float cl = l + i * cw;
+            if (txt.length() == 0 && ic == null) continue;
+            float x0 = l + i * cw + d;
+            float x1 = l + (i + 1) * cw - d;
+            if (x1 - x0 < ls * 2) continue;
             fill.setStyle(Paint.Style.FILL);
-            fill.setColor(s.color);
-            c.drawCircle(cl + ls * 0.4f, b - ls * 0.35f, ls * 0.3f, fill);
+            fill.setColor(0x66000000);
+            tmp.set(x0, b - chH, x1, b);
+            c.drawRoundRect(tmp, w.rounded ? chH / 2f : 2 * d, w.rounded ? chH / 2f : 2 * d, fill);
+            float mx = x0 + 4 * d;
+            if (ic != null) {
+                Icons.draw(c, ic, mx, b - chH + (chH - ls * 1.15f) / 2f, ls * 1.15f, s.color);
+                mx += ls * 1.15f + 3 * d;
+            } else {
+                fill.setColor(s.color);
+                c.drawCircle(mx + ls * 0.3f, b - chH / 2f, ls * 0.3f, fill);
+                mx += ls * 0.6f + 3 * d;
+            }
             textP.setColor(st.labelColor);
-            drawText(c, txt, cl + ls, cl + cw - 2 * d, b - ls * 0.1f, 0, ls);
+            drawText(c, txt, mx, x1 - 4 * d, b - chH / 2f + ls * 0.35f, 0, ls);
         }
     }
 }

@@ -26,12 +26,18 @@ final class Sensors {
         double min = 0;
         double max = Double.NaN;   // NaN = auto-scale (used for transfer rates)
         String thKey;              // threshold group, or null
+        boolean fan;               // fan speed (RPM or duty percentage)
     }
 
     static final class Table {
         final LinkedHashMap<String, Sensor> map = new LinkedHashMap<String, Sensor>();
         final LinkedHashMap<String, ArrayList<Sensor>> byCat =
                 new LinkedHashMap<String, ArrayList<Sensor>>();
+
+        void markFan(String id) {
+            Sensor s = map.get(id);
+            if (s != null) s.fan = true;
+        }
 
         void add(String cat, String id, String label, Unit unit, double v, double max, String th) {
             if (Double.isNaN(v) || map.containsKey(id)) return;
@@ -130,6 +136,8 @@ final class Sensors {
                 t.add(cat, p + "vram", "VRAM used", Unit.BYTES, opt(g, "mem_used_b"), opt(g, "mem_total_b"), null);
                 t.add(cat, p + "fan_pct", "Fan speed", Unit.PERCENT, opt(g, "fan_pct"), 100, null);
                 t.add(cat, p + "fan_rpm", "Fan speed (RPM)", Unit.RPM, opt(g, "fan_rpm"), 5000, null);
+                t.markFan(p + "fan_pct");
+                t.markFan(p + "fan_rpm");
                 double pl = opt(g, "power_limit_w");
                 t.add(cat, p + "power", "Power draw", Unit.WATT, opt(g, "power_w"), Double.isNaN(pl) ? 300 : pl, null);
                 t.add(cat, p + "clk_core", "Core clock", Unit.MHZ, opt(g, "clock_core_mhz"), 2500, null);
@@ -204,6 +212,7 @@ final class Sensors {
                     String key = o.optString("key", "f" + k);
                     t.add(cat, p + key, nice(o.optString("label", ""), key, "Fan"),
                             Unit.RPM, opt(o, "rpm"), 3000, null);
+                    t.markFan(p + key);
                 }
                 a = ch.optJSONArray("pwms");
                 if (a != null) for (int k = 0; k < a.length(); k++) {
@@ -212,6 +221,7 @@ final class Sensors {
                     String key = o.optString("key", "p" + k);
                     t.add(cat, p + key, "PWM " + key.replaceAll("\\D", "") + " duty",
                             Unit.PERCENT, opt(o, "pct"), 100, null);
+                    t.markFan(p + key);
                 }
                 a = ch.optJSONArray("volts");
                 if (a != null) for (int k = 0; k < a.length(); k++) {
@@ -261,6 +271,45 @@ final class Sensors {
             default:
                 return String.format(Locale.US, "%.2f", v);
         }
+    }
+
+    /** Value and unit as two parts, e.g. {"42", "\u00B0C"}, so a widget can draw the unit smaller. */
+    static String[] formatParts(Unit u, double v, boolean tempF) {
+        switch (u) {
+            case PERCENT:
+                return new String[]{String.format(Locale.US, "%.0f", v), "%"};
+            case CELSIUS:
+                if (tempF) return new String[]{String.format(Locale.US, "%.0f", v * 9.0 / 5.0 + 32.0), "\u00B0F"};
+                return new String[]{String.format(Locale.US, "%.0f", v), "\u00B0C"};
+            case MHZ:
+                if (v >= 1000) return new String[]{String.format(Locale.US, "%.2f", v / 1000.0), "GHz"};
+                return new String[]{String.format(Locale.US, "%.0f", v), "MHz"};
+            case BYTES:
+                return scaled(v, 1024, new String[]{"B", "KB", "MB", "GB", "TB"}, "");
+            case BYTES_PS:
+                if (rateBits) return scaled(v * 8, 1000, new String[]{"b", "Kb", "Mb", "Gb", "Tb"}, "/s");
+                return scaled(v, 1024, new String[]{"B", "KB", "MB", "GB", "TB"}, "/s");
+            case RPM:
+                return new String[]{String.format(Locale.US, "%.0f", v), "RPM"};
+            case VOLT:
+                return new String[]{String.format(Locale.US, "%.2f", v), "V"};
+            case WATT:
+                return new String[]{String.format(Locale.US, "%.1f", v), "W"};
+            case SECONDS:
+                return new String[]{duration(v), ""};
+            default:
+                return new String[]{String.format(Locale.US, "%.2f", v), ""};
+        }
+    }
+
+    private static String[] scaled(double b, double base, String[] units, String suffix) {
+        int i = 0;
+        while (b >= base && i < units.length - 1) {
+            b /= base;
+            i++;
+        }
+        String f = (i == 0 || b >= 100) ? "%.0f" : "%.1f";
+        return new String[]{String.format(Locale.US, f, b), units[i] + suffix};
     }
 
     static String bytes(double b, String suffix) {

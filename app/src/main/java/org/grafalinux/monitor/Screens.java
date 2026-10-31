@@ -369,6 +369,8 @@ final class Screens {
                     col -> { st.fontColor = col; changed(a); }));
             body.addView(Ui.colorRow(a, "Label colour", st.labelColor, Model.WHITE,
                     col -> { st.labelColor = col; changed(a); }));
+            body.addView(Ui.colorRow(a, "Icon colour", st.iconColor, Model.WHITE,
+                    col -> { st.iconColor = col; changed(a); }));
 
             body.addView(Ui.header(a, "Background"));
             body.addView(labeled(a, "Type", choice(a, "Background type",
@@ -438,6 +440,8 @@ final class Screens {
             body.addView(Ui.header(a, "Threshold colours"));
             body.addView(check(a, "Colour values when they pass a threshold", st.thEnabled,
                     (btn, on) -> { st.thEnabled = on; changed(a); }));
+            body.addView(check(a, "Fade gradually towards the warning and critical colours", st.thGradient,
+                    (btn, on) -> { st.thGradient = on; changed(a); }));
             body.addView(Ui.colorRow(a, "Warning colour", st.warnColor, 0xFFE5A50A,
                     col -> { st.warnColor = col; changed(a); }));
             body.addView(Ui.colorRow(a, "Critical colour", st.critColor, 0xFFDA4453,
@@ -487,6 +491,13 @@ final class Screens {
             body.addView(check(a, "Show sensor names on widgets (labels you type always show)", st.showNames,
                     (btn, on) -> { st.showNames = on; changed(a); }));
             body.addView(Ui.text(a, "Each widget can override both settings.", 12, Ui.SUB));
+            body.addView(check(a, "Show icons", st.showIcons, (btn, on) -> { st.showIcons = on; changed(a); }));
+            body.addView(Ui.stepper(a, "Space inside widgets (dp)", new Ui.Range() {
+                public int min() { return 0; }
+                public int max() { return 16; }
+                public int get() { return st.innerPad; }
+                public void set(int v) { st.innerPad = v; changed(a); }
+            }));
 
             body.addView(Ui.header(a, "Units"));
             body.addView(labeled(a, "Temperature", choice(a, "Temperature unit",
@@ -745,7 +756,7 @@ final class Screens {
         LinearLayout body = Ui.vbox(a);
         sc.root = Ui.scaffold(a, "Credits", v -> a.pop(), body);
         body.addView(Ui.text(a, "Grafalinux System Monitor", 22, Ui.TEXT));
-        Ui.add(body, Ui.text(a, "Version: v0.3.0 Beta", 15, Ui.SUB), 6);
+        Ui.add(body, Ui.text(a, "Version: v0.3.1 Beta", 15, Ui.SUB), 6);
         Ui.add(body, Ui.text(a, "Author: ItsNotMeBro87 and Claude", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "License: GPLv3", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "This program is free software: you can redistribute it and/or modify it "
@@ -796,6 +807,16 @@ final class Screens {
                 which -> w.textSize = which)));
         body.addView(check(a, "Stacked (bars touch with text inside; gauges become concentric rings)",
                 w.stacked, (btn, on) -> w.stacked = on));
+        body.addView(check(a, "Rounded corners and line ends", w.rounded, (btn, on) -> w.rounded = on));
+        body.addView(check(a, "Vertical bars (columns instead of rows)", w.vertical, (btn, on) -> w.vertical = on));
+        body.addView(Ui.stepper(a, "Gap between stacked rings (dp)", new Ui.Range() {
+            public int min() { return 0; }
+            public int max() { return 12; }
+            public int get() { return w.ringGap; }
+            public void set(int v) { w.ringGap = v; }
+        }));
+        body.addView(labeled(a, "Ring thickness", choice(a, "Ring thickness",
+                new String[]{"Thin", "Normal", "Thick"}, w.ringThick, which -> w.ringThick = which)));
         body.addView(Ui.colorRow(a, "Title colour", w.titleColor != 0 ? w.titleColor : st.fontColor,
                 st.fontColor, col -> w.titleColor = (col == st.fontColor) ? 0 : col));
 
@@ -842,6 +863,28 @@ final class Screens {
                 TextView name = Ui.text(a, seriesName(a, s), 14, Ui.TEXT);
                 name.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10));
                 row.addView(name, new LinearLayout.LayoutParams(0, Ui.WRAP, 1));
+                TextView up = Ui.text(a, "\u25B2", 14, Ui.SUB);
+                up.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10));
+                up.setOnClickListener(v -> {
+                    int idx = w.series.indexOf(s);
+                    if (idx > 0) {
+                        w.series.remove(idx);
+                        w.series.add(idx - 1, s);
+                        rebuild[0].run();
+                    }
+                });
+                TextView dn = Ui.text(a, "\u25BC", 14, Ui.SUB);
+                dn.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 10));
+                dn.setOnClickListener(v -> {
+                    int idx = w.series.indexOf(s);
+                    if (idx >= 0 && idx < w.series.size() - 1) {
+                        w.series.remove(idx);
+                        w.series.add(idx + 1, s);
+                        rebuild[0].run();
+                    }
+                });
+                row.addView(up);
+                row.addView(dn);
                 TextView del = Ui.text(a, "\u2715", 18, Ui.SUB);
                 del.setPadding(Ui.dp(a, 14), Ui.dp(a, 10), Ui.dp(a, 14), Ui.dp(a, 10));
                 del.setOnClickListener(v -> {
@@ -900,6 +943,33 @@ final class Screens {
         box.addView(Ui.text(a, "Sensor: " + (sn != null ? sn.label : s.sensorId), 13, Ui.SUB));
         final EditText label = Ui.edit(a, "Custom label (optional)", s.label, InputType.TYPE_CLASS_TEXT);
         box.addView(label);
+
+        final String[] iconIds = new String[Icons.NAMES.length + 2];
+        final String[] iconLabels = new String[Icons.NAMES.length + 2];
+        iconIds[0] = "";
+        iconLabels[0] = "Automatic";
+        iconIds[1] = "none";
+        iconLabels[1] = "No icon";
+        int curIcon = 0;
+        for (int i = 0; i < Icons.NAMES.length; i++) {
+            iconIds[i + 2] = Icons.NAMES[i];
+            iconLabels[i + 2] = Icons.LABELS[i];
+        }
+        for (int i = 0; i < iconIds.length; i++) {
+            if (iconIds[i].equals(s.icon)) curIcon = i;
+        }
+        final String[] chosenIcon = {s.icon};
+        box.addView(labeled(a, "Icon", choice(a, "Icon", iconLabels, curIcon,
+                which -> chosenIcon[0] = iconIds[which])));
+
+        final int[] fanMode = {s.fanMode};
+        if (sn != null && sn.fan) {
+            box.addView(labeled(a, "Fan speed shown as", choice(a, "Fan speed shown as",
+                    new String[]{"Follow global setting", "Percentage", "RPM"}, s.fanMode,
+                    which -> fanMode[0] = which)));
+            box.addView(Ui.text(a, "For fans, Minimum and Maximum (below) mean the RPM at 0% and at 100%, "
+                    + "so the app can convert between percentage and RPM.", 12, Ui.SUB));
+        }
         final int[] colour = {s.color};
         box.addView(Ui.colorRow(a, "Colour", s.color, Model.WHITE, c2 -> colour[0] = c2));
         int numType = InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -914,6 +984,8 @@ final class Screens {
                 .setPositiveButton("OK", (dlg, which) -> {
                     s.label = label.getText().toString().trim();
                     s.color = colour[0];
+                    s.icon = chosenIcon[0];
+                    s.fanMode = fanMode[0];
                     s.min = parse(mn);
                     s.max = parse(mx);
                     done.run();

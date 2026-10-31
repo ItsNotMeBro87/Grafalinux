@@ -90,6 +90,12 @@ public final class MainActivity extends Activity {
 
         buildDrawer();
         setContentView(root);
+        getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(vis -> {
+            if (store.settings.fullscreen && (vis & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                handler.removeCallbacks(refullscreen);
+                handler.postDelayed(refullscreen, 1500);
+            }
+        });
 
         rebuildWanted();
         updateHint();
@@ -97,9 +103,18 @@ public final class MainActivity extends Activity {
         applySettings();
     }
 
+    /** Hides the system bars again after a keyboard, dialog or other screen brought them back. */
+    private final Runnable refullscreen = new Runnable() {
+        @Override
+        public void run() {
+            applyFullscreen();
+        }
+    };
+
     @Override
     protected void onResume() {
         super.onResume();
+        applyFullscreen();
         updatePolling();
         showMenuButton();
     }
@@ -646,6 +661,7 @@ public final class MainActivity extends Activity {
         updateHint();
         updatePolling();
         if (stack.size() == 1) showMenuButton();
+        if (store.settings.fullscreen) handler.postDelayed(refullscreen, 300);
     }
 
     private void navigate(Screen s) {

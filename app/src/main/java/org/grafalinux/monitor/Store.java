@@ -141,6 +141,10 @@ final class Store {
         s.bgDim = sp.getInt("bgDim", 30);
         s.rateBits = sp.getBoolean("rateBits", false);
         s.fanPercent = sp.getBoolean("fanPercent", false);
+        s.innerPad = sp.getInt("innerPad", 2);
+        s.iconColor = sp.getInt("iconColor", Model.WHITE);
+        s.showIcons = sp.getBoolean("showIcons", true);
+        s.thGradient = sp.getBoolean("thGradient", false);
     }
 
     void saveSettings() {
@@ -173,6 +177,10 @@ final class Store {
         e.putInt("bgDim", s.bgDim);
         e.putBoolean("rateBits", s.rateBits);
         e.putBoolean("fanPercent", s.fanPercent);
+        e.putInt("innerPad", s.innerPad);
+        e.putInt("iconColor", s.iconColor);
+        e.putBoolean("showIcons", s.showIcons);
+        e.putBoolean("thGradient", s.thGradient);
         e.apply();
     }
 }

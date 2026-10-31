@@ -86,10 +86,14 @@ final class Model {
         int color = WHITE;
         double min = Double.NaN;    // NaN = automatic
         double max = Double.NaN;
+        String icon = "";           // "" = automatic, "none" = no icon, otherwise an icon name
+        int fanMode = 0;            // fan sensors only: 0 follow global, 1 percent, 2 RPM
 
         JSONObject toJson() throws JSONException {
             JSONObject o = new JSONObject();
             o.put("sensor", sensorId);
+            o.put("icon", icon);
+            o.put("fanMode", fanMode);
             o.put("label", label);
             o.put("color", color);
             if (!Double.isNaN(min)) o.put("min", min);
@@ -102,6 +106,8 @@ final class Model {
             s.sensorId = o.optString("sensor", "");
             s.label = o.optString("label", "");
             s.color = o.optInt("color", WHITE);
+            s.icon = o.optString("icon", "");
+            s.fanMode = o.optInt("fanMode", 0);
             s.min = o.has("min") ? o.optDouble("min", Double.NaN) : Double.NaN;
             s.max = o.has("max") ? o.optDouble("max", Double.NaN) : Double.NaN;
             return s;
@@ -120,6 +126,10 @@ final class Model {
         int textSize = 0;           // 0 follow global, 1 small, 2 normal, 3 large, 4 extra large
         boolean stacked = false;    // stacked bars / concentric gauges
         String text = "";           // content of a Text widget
+        boolean rounded = true;     // rounded or sharp corners / line ends
+        boolean vertical = false;   // bars: vertical columns instead of horizontal bars
+        int ringGap = 2;            // dp between stacked rings
+        int ringThick = 1;          // 0 thin, 1 normal, 2 thick
         ArrayList<Series> series = new ArrayList<Series>();
 
         JSONObject toJson() throws JSONException {
@@ -137,6 +147,10 @@ final class Model {
             o.put("textSize", textSize);
             o.put("stacked", stacked);
             o.put("text", text);
+            o.put("rounded", rounded);
+            o.put("vertical", vertical);
+            o.put("ringGap", ringGap);
+            o.put("ringThick", ringThick);
             JSONArray arr = new JSONArray();
             for (Series s : series) arr.put(s.toJson());
             o.put("series", arr);
@@ -158,6 +172,10 @@ final class Model {
             w.textSize = o.optInt("textSize", 0);
             w.stacked = o.optBoolean("stacked", false);
             w.text = o.optString("text", "");
+            w.rounded = o.optBoolean("rounded", true);
+            w.vertical = o.optBoolean("vertical", false);
+            w.ringGap = o.optInt("ringGap", 2);
+            w.ringThick = o.optInt("ringThick", 1);
             JSONArray arr = o.optJSONArray("series");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -276,7 +294,11 @@ final class Model {
         int bgGradDir = 0;              // 0 top to bottom, 1 left to right, 2 diagonal
         int bgDim = 30;                 // percent, darkens a background image
         boolean rateBits = false;       // show network / disk speeds in bits
-        boolean fanPercent = false;     // show fan speed as a percentage of the sensor maximum
+        boolean fanPercent = false;     // show fan speed as a percentage (fan sensors only)
+        int innerPad = 2;               // dp inside each widget card
+        int iconColor = WHITE;
+        boolean showIcons = true;
+        boolean thGradient = false;     // fade gradually towards the warning / critical colours
 
         Settings() {
             resetThresholds();

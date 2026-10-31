@@ -13,7 +13,6 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -194,62 +193,37 @@ final class Ui {
         return row;
     }
 
-    /** Colour picker dialog: RGB sliders, hex entry and a few presets. */
+    /** Colour picker dialog: colour wheel, hex entry and a few presets. */
     static void pickColor(final Context c, int initial, final ColorCb cb) {
         final int[] cur = {initial | 0xFF000000};
         final boolean[] busy = {false};
         LinearLayout box = vbox(c);
-        box.setPadding(dp(c, 20), dp(c, 12), dp(c, 20), 0);
+        box.setPadding(dp(c, 20), dp(c, 12), dp(c, 20), dp(c, 4));
 
+        final ColorWheelView wheel = new ColorWheelView(c);
+        wheel.setColor(cur[0]);
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        wp.gravity = Gravity.CENTER_HORIZONTAL;
+        box.addView(wheel, wp);
+
+        LinearLayout row = hbox(c);
         final View prev = new View(c);
-        box.addView(prev, new LinearLayout.LayoutParams(MATCH, dp(c, 44)));
-
+        setSwatch(c, prev, cur[0]);
+        row.addView(prev, new LinearLayout.LayoutParams(dp(c, 44), dp(c, 36)));
         final EditText hex = edit(c, "#RRGGBB", hexOf(cur[0]),
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
-        box.addView(hex, lp(c, MATCH, WRAP, 0, 8));
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(0, WRAP, 1);
+        hp.leftMargin = dp(c, 12);
+        row.addView(hex, hp);
+        box.addView(row, lp(c, MATCH, WRAP, 0, 8));
 
-        final SeekBar[] bars = new SeekBar[3];
-        final String[] names = {"R", "G", "B"};
-
-        final Runnable refresh = new Runnable() {
-            @Override
-            public void run() {
-                busy[0] = true;
-                setSwatch(c, prev, cur[0]);
-                bars[0].setProgress(Color.red(cur[0]));
-                bars[1].setProgress(Color.green(cur[0]));
-                bars[2].setProgress(Color.blue(cur[0]));
-                String h = hexOf(cur[0]);
-                if (!hex.getText().toString().equalsIgnoreCase(h)) hex.setText(h);
-                busy[0] = false;
-            }
-        };
-
-        for (int i = 0; i < 3; i++) {
-            LinearLayout r = hbox(c);
-            r.addView(text(c, names[i], 14, SUB), new LinearLayout.LayoutParams(dp(c, 22), WRAP));
-            SeekBar sb = new SeekBar(c);
-            sb.setMax(255);
-            bars[i] = sb;
-            sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override
-                public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
-                    if (busy[0] || !fromUser) return;
-                    cur[0] = Color.rgb(bars[0].getProgress(), bars[1].getProgress(), bars[2].getProgress());
-                    refresh.run();
-                }
-
-                @Override
-                public void onStartTrackingTouch(SeekBar s) {
-                }
-
-                @Override
-                public void onStopTrackingTouch(SeekBar s) {
-                }
-            });
-            r.addView(sb, new LinearLayout.LayoutParams(0, WRAP, 1));
-            box.addView(r, lp(c, MATCH, WRAP, 0, 4));
-        }
+        wheel.setListener(col -> {
+            cur[0] = col | 0xFF000000;
+            busy[0] = true;
+            setSwatch(c, prev, cur[0]);
+            hex.setText(hexOf(cur[0]));
+            busy[0] = false;
+        });
 
         onText(hex, s -> {
             if (busy[0]) return;
@@ -258,7 +232,8 @@ final class Ui {
                 if (!t.startsWith("#")) t = "#" + t;
                 if (t.length() == 7) {
                     cur[0] = Color.parseColor(t) | 0xFF000000;
-                    refresh.run();
+                    setSwatch(c, prev, cur[0]);
+                    wheel.setColor(cur[0]);
                 }
             } catch (IllegalArgumentException ignored) {
                 // incomplete or invalid hex: wait for more input
@@ -271,17 +246,22 @@ final class Ui {
             View sw = swatch(c, col);
             sw.setOnClickListener(v -> {
                 cur[0] = col;
-                refresh.run();
+                busy[0] = true;
+                setSwatch(c, prev, col);
+                hex.setText(hexOf(col));
+                wheel.setColor(col);
+                busy[0] = false;
             });
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(c, 28), 1);
             p.rightMargin = dp(c, 4);
             presets.addView(sw, p);
         }
         box.addView(presets, lp(c, MATCH, WRAP, 0, 10));
-        refresh.run();
 
-        dialog(c).setTitle("Pick a colour").setView(box)
-                .setPositiveButton("OK", (d, w) -> cb.on(cur[0]))
+        ScrollView sv = new ScrollView(c);
+        sv.addView(box, new ViewGroup.LayoutParams(MATCH, WRAP));
+        dialog(c).setTitle("Pick a colour").setView(sv)
+                .setPositiveButton("OK", (dlg, w) -> cb.on(cur[0]))
                 .setNegativeButton("Cancel", null)
                 .show();
     }
