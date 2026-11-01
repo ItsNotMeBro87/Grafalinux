@@ -28,6 +28,8 @@ final class Model {
     }
     static final String[] ALIGN_NAMES = {"Left", "Center", "Right"};
     static final String[] NAME_MODE_NAMES = {"Follow global setting", "Show sensor names", "Hide sensor names"};
+    static final String[] CORNER_NAMES = {"Follow global setting", "Rounded", "Sharp"};
+    static final String[] CORNER_GLOBAL_NAMES = {"Sharp", "Rounded"};
     static final String[] STYLE_NAMES = {"Follow global setting", "Soft card", "Grafana"};
     static final String[] PANEL_NAMES = {"Soft cards", "Grafana"};
     static final String[] BAR_STYLE_NAMES = {"Gradient bar", "LCD blocks", "Solid bar"};
@@ -138,7 +140,7 @@ final class Model {
         int textSize = 0;           // 0 follow global, 1 small, 2 normal, 3 large, 4 extra large
         boolean stacked = false;    // stacked bars / concentric gauges
         String text = "";           // content of a Text widget
-        boolean rounded = true;     // rounded or sharp corners / line ends
+        int corners = 0;            // 0 follow global, 1 rounded, 2 sharp (corners / line ends)
         boolean vertical = false;   // bars: vertical columns instead of horizontal bars
         int ringGap = 2;            // dp between stacked rings
         int ringThick = 1;          // 0 thin, 1 normal, 2 thick, 3 full (a pie)
@@ -169,7 +171,7 @@ final class Model {
             o.put("textSize", textSize);
             o.put("stacked", stacked);
             o.put("text", text);
-            o.put("rounded", rounded);
+            o.put("corners", corners);
             o.put("vertical", vertical);
             o.put("ringGap", ringGap);
             o.put("ringThick", ringThick);
@@ -204,7 +206,7 @@ final class Model {
             w.textSize = o.optInt("textSize", 0);
             w.stacked = o.optBoolean("stacked", false);
             w.text = o.optString("text", "");
-            w.rounded = o.optBoolean("rounded", true);
+            w.corners = o.optInt("corners", 0);
             w.vertical = o.optBoolean("vertical", false);
             w.ringGap = o.optInt("ringGap", 2);
             w.ringThick = o.optInt("ringThick", 1);
@@ -347,13 +349,18 @@ final class Model {
         boolean thGradient = false;     // fade gradually towards the warning / critical colours
         int wakeMode = 0;               // experimental: 0 off, 1 when USB power connects, 2 check the PC
         int wakeInterval = 30;          // seconds between checks (mode 2)
-        int panelStyle = 1;             // default look of widgets: 0 soft cards, 1 Grafana
+        int panelStyle = 0;             // default look of widgets: 0 soft cards, 1 Grafana
+        boolean rounded = false;        // default corners: sharp (false) or rounded
+        float batWarn = 30;             // battery: LOW is bad, so warning is above critical
+        float batCrit = 15;
 
         Settings() {
             resetThresholds();
         }
 
         void resetThresholds() {
+            batWarn = 30;
+            batCrit = 15;
             for (int i = 0; i < TH_KEYS.length; i++) {
                 thWarn[i] = TH_WARN_DEF[i];
                 thCrit[i] = TH_CRIT_DEF[i];

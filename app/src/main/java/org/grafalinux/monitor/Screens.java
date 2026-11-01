@@ -9,6 +9,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -160,6 +161,28 @@ final class Screens {
                 InputType.TYPE_CLASS_NUMBER);
         final EditText token = Ui.edit(a, "Token (if the agent uses one)", existing == null ? "" : existing.token,
                 InputType.TYPE_CLASS_TEXT);
+        box.addView(Ui.button(a, "Find servers on my network", v -> {
+            Toast.makeText(a, "Searching...", Toast.LENGTH_SHORT).show();
+            Discovery.scan(found -> {
+                if (found.isEmpty()) {
+                    Toast.makeText(a, "No server found. Is the agent running (v0.2 or newer) and are the phone "
+                            + "and PC on the same Wi-Fi? UDP port " + Discovery.PORT + " must be allowed.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                CharSequence[] items = new CharSequence[found.size()];
+                for (int i = 0; i < items.length; i++) {
+                    items[i] = found.get(i).name + "  (" + found.get(i).host + ":" + found.get(i).port + ")";
+                }
+                Ui.dialog(a).setTitle("Servers found").setItems(items, (dd, which) -> {
+                    Discovery.Found f = found.get(which);
+                    host.setText(f.host);
+                    port.setText(String.valueOf(f.port));
+                    if (name.getText().toString().trim().length() == 0) name.setText(f.name);
+                    token.requestFocus();
+                }).setNegativeButton("Cancel", null).show();
+            });
+        }));
         box.addView(name);
         box.addView(host);
         box.addView(port);
@@ -440,6 +463,9 @@ final class Screens {
             body.addView(Ui.header(a, "Panel style"));
             body.addView(labeled(a, "Default panel style", choice(a, "Default panel style", Model.PANEL_NAMES,
                     st.panelStyle, which -> { st.panelStyle = which; changed(a); })));
+            body.addView(labeled(a, "Default corners and line ends", choice(a, "Default corners",
+                    Model.CORNER_GLOBAL_NAMES, st.rounded ? 1 : 0,
+                    which -> { st.rounded = which == 1; changed(a); })));
             body.addView(Ui.text(a, "Grafana: panel header, sparklines, threshold bands, gradient or LCD bars "
                     + "and a legend table. Each widget can override this. In Grafana style a series whose colour "
                     + "is still white uses Grafana's own colours; pick any other colour to keep it.", 12, Ui.SUB));
@@ -465,6 +491,11 @@ final class Screens {
                 changed(a);
                 build[0].run();
             }), 10);
+            LinearLayout bat = Ui.card(a);
+            bat.addView(Ui.text(a, "Battery level (phone or laptop): low is bad", 14, Ui.TEXT));
+            bat.addView(batteryRow(a, st, false));
+            bat.addView(batteryRow(a, st, true));
+            Ui.add(body, bat, 8);
             body.addView(Ui.text(a, "Thresholds only change the colour of values; they are guides "
                     + "and can be turned off above.", 12, Ui.SUB));
 
@@ -614,6 +645,45 @@ final class Screens {
         };
         build[0].run();
         return sc;
+    }
+
+    /** Battery thresholds: the warning level must stay above the critical level. */
+    private static View batteryRow(final MainActivity a, final Model.Settings st, final boolean crit) {
+        LinearLayout row = Ui.hbox(a);
+        row.addView(Ui.text(a, crit ? "Critical" : "Warning", 13, Ui.SUB),
+                new LinearLayout.LayoutParams(Ui.dp(a, 62), Ui.WRAP));
+        final TextView val = Ui.text(a, "", 13, Ui.SUB);
+        val.setGravity(android.view.Gravity.END);
+        final Runnable paint = () -> {
+            float v = crit ? st.batCrit : st.batWarn;
+            val.setText(String.format(Locale.US, "%.0f%%", v));
+            val.setTextColor(st.batWarn <= st.batCrit ? Ui.DANGER : Ui.SUB);
+        };
+        paint.run();
+        SeekBar sb = new SeekBar(a);
+        sb.setMax(100);
+        sb.setProgress(Math.max(0, Math.min(100, Math.round(crit ? st.batCrit : st.batWarn))));
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (crit) st.batCrit = p;
+                else st.batWarn = p;
+                paint.run();
+                a.dv.invalidate();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar s) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar s) {
+                a.store.saveSettings();
+            }
+        });
+        row.addView(sb, new LinearLayout.LayoutParams(0, Ui.WRAP, 1));
+        row.addView(val, new LinearLayout.LayoutParams(Ui.dp(a, 56), Ui.WRAP));
+        return row;
     }
 
     private static View thresholdRow(final MainActivity a, final Model.Settings st, final int idx,
@@ -805,7 +875,7 @@ final class Screens {
         LinearLayout body = Ui.vbox(a);
         sc.root = Ui.scaffold(a, "Credits", v -> a.pop(), body);
         body.addView(Ui.text(a, "Grafalinux System Monitor", 22, Ui.TEXT));
-        Ui.add(body, Ui.text(a, "Version: v0.3.3 Beta", 15, Ui.SUB), 6);
+        Ui.add(body, Ui.text(a, "Version: v0.4.0 Beta", 15, Ui.SUB), 6);
         Ui.add(body, Ui.text(a, "Author: ItsNotMeBro87 and Claude", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "License: GPLv3", 15, Ui.TEXT), 18);
         Ui.add(body, Ui.text(a, "This program is free software: you can redistribute it and/or modify it "
@@ -859,7 +929,8 @@ final class Screens {
                 which -> w.textSize = which)));
         body.addView(check(a, "Stacked (bars touch with text inside; gauges become concentric rings)",
                 w.stacked, (btn, on) -> w.stacked = on));
-        body.addView(check(a, "Rounded corners and line ends", w.rounded, (btn, on) -> w.rounded = on));
+        body.addView(labeled(a, "Corners and line ends", choice(a, "Corners and line ends", Model.CORNER_NAMES,
+                w.corners, which -> w.corners = which)));
         body.addView(check(a, "Vertical bars (columns instead of rows)", w.vertical, (btn, on) -> w.vertical = on));
         body.addView(Ui.stepper(a, "Gap between stacked rings (dp)", new Ui.Range() {
             public int min() { return 0; }
@@ -994,6 +1065,7 @@ final class Screens {
         body.addView(Ui.text(a, "Tap a sensor to change its label, colour or range. "
                 + "Gauges, bars and graphs can show several sensors at once.", 12, Ui.SUB));
 
+        Ui.add(body, Ui.button(a, "Duplicate widget", v -> a.duplicateWidget(w)), 22);
         TextView del = Ui.button(a, "Delete widget", v -> Ui.dialog(a).setTitle("Delete this widget?")
                 .setPositiveButton("Delete", (dlg, which) -> {
                     a.dash.widgets.remove(w);
@@ -1001,7 +1073,7 @@ final class Screens {
                 })
                 .setNegativeButton("Cancel", null).show());
         del.setTextColor(Ui.DANGER);
-        Ui.add(body, del, 28);
+        Ui.add(body, del, 10);
         return sc;
     }
 

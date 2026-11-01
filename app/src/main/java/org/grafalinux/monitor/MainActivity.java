@@ -21,6 +21,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -316,6 +317,25 @@ public final class MainActivity extends Activity {
         dash.fit();
         dv.relayout();
         push(Screens.widgetEditor(this, w, true));
+    }
+
+    /** Copies a widget (all its settings and sensors) into the first free spot and opens the copy. */
+    void duplicateWidget(Model.Widget src) {
+        if (dash.locked) return;
+        try {
+            Model.Widget w = Model.Widget.fromJson(src.toJson());
+            w.id = Model.newId();
+            if (w.title.length() > 0) w.title = w.title + " (copy)";
+            place(w);
+            dash.widgets.add(w);
+            dash.fit();
+            dv.relayout();
+            pop();
+            push(Screens.widgetEditor(this, w, false));
+            Toast.makeText(this, "Widget duplicated", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not duplicate: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private boolean isFree(int x, int y, int ww, int hh) {

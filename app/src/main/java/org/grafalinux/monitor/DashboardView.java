@@ -473,6 +473,20 @@ final class DashboardView extends View {
 
     /** The colour for value v of sensor sn: base, or a warning / critical colour past a threshold. */
     private int colorAt(int base, Sensors.Sensor sn, double v) {
+        if (st.thEnabled && sn != null && "battery".equals(sn.thKey)) {
+            // battery: LOW is bad (warning is above critical)
+            float crit = st.batCrit;
+            float warn = Math.max(st.batWarn, crit + 1);
+            if (v <= crit) return st.critColor;
+            if (v <= warn) {
+                return st.thGradient ? lerp(st.warnColor, st.critColor, (warn - v) / (warn - crit)) : st.warnColor;
+            }
+            if (st.thGradient) {
+                float end = Math.min(100f, warn * 1.25f);
+                if (v < end && end > warn) return lerp(base, st.warnColor, (end - v) / (end - warn));
+            }
+            return base;
+        }
         if (st.thEnabled && sn != null) {
             int i = Model.thIndex(sn.thKey);
             if (i >= 0) {
@@ -662,7 +676,7 @@ final class DashboardView extends View {
     private void drawWidget(Canvas c, Model.Widget w, RectF r) {
         boolean g = grafana(w);
         float ts = tscale(w);
-        float cr = w.rounded ? (g ? 4 * d : 10 * d) : 0;
+        float cr = rnd(w) ? (g ? 4 * d : 10 * d) : 0;
         fill.setStyle(Paint.Style.FILL);
         fill.setColor(g ? G_PANEL : 0x14FFFFFF);
         c.drawRoundRect(r, cr, cr, fill);
@@ -761,7 +775,7 @@ final class DashboardView extends View {
         fill.setStyle(Paint.Style.FILL);
         fill.setColor(0x66000000);
         tmp.set(x0, y0, x0 + chW, y0 + chH);
-        c.drawRoundRect(tmp, w.rounded ? chH / 2f : 2 * d, w.rounded ? chH / 2f : 2 * d, fill);
+        c.drawRoundRect(tmp, rnd(w) ? chH / 2f : 2 * d, rnd(w) ? chH / 2f : 2 * d, fill);
         textP.setColor(w.titleColor != 0 ? w.titleColor : st.fontColor);
         textP.setTextAlign(Paint.Align.LEFT);
         c.drawText(w.title, x0 + 5 * d, y0 + chH / 2f + tsz * 0.35f, textP);
@@ -901,7 +915,7 @@ final class DashboardView extends View {
                                 float cy, float dia, float start, float sweepMax, float ts) {
         float sw = Math.max(2 * d, dia * THICK[Math.max(0, Math.min(2, w.ringThick))]);
         tmp.set(cx - dia / 2f + sw / 2f, cy - dia / 2f + sw / 2f, cx + dia / 2f - sw / 2f, cy + dia / 2f - sw / 2f);
-        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+        Paint.Cap cap = rnd(w) ? Paint.Cap.ROUND : Paint.Cap.BUTT;
         stroke.setStrokeWidth(sw);
         stroke.setStrokeCap(sweepMax < 360 ? cap : Paint.Cap.BUTT);
         stroke.setColor(0x33FFFFFF);
@@ -1052,7 +1066,7 @@ final class DashboardView extends View {
         float band = rad0 * BAND[Math.max(0, Math.min(2, w.ringThick))];
         float pitch = band / n;
         float sw = Math.max(2 * d, pitch - w.ringGap * d);
-        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+        Paint.Cap cap = rnd(w) ? Paint.Cap.ROUND : Paint.Cap.BUTT;
 
         for (int i = 0; i < n; i++) {
             Model.Series s = w.series.get(i);
@@ -1172,10 +1186,10 @@ final class DashboardView extends View {
         float gapPx = w.stacked ? 0 : 3 * d;
         float avail = vert ? (r - l) : (b - t);
         float bs = Math.max(2 * d, (avail - gapPx * (n - 1)) / n);          // bar thickness
-        float rad = w.rounded ? (w.stacked ? 0 : Math.min(bs / 2f, 10 * d)) : 0;
+        float rad = rnd(w) ? (w.stacked ? 0 : Math.min(bs / 2f, 10 * d)) : 0;
 
         boolean clipped = false;
-        if (w.stacked && w.rounded) {
+        if (w.stacked && rnd(w)) {
             tmp.set(l, t, r, b);
             path.reset();
             path.addRoundRect(tmp, 8 * d, 8 * d, Path.Direction.CW);
@@ -1388,7 +1402,7 @@ final class DashboardView extends View {
             fill.setStyle(Paint.Style.FILL);
             fill.setColor(0x66000000);
             tmp.set(x0, b - chH, x1, b);
-            c.drawRoundRect(tmp, w.rounded ? chH / 2f : 2 * d, w.rounded ? chH / 2f : 2 * d, fill);
+            c.drawRoundRect(tmp, rnd(w) ? chH / 2f : 2 * d, rnd(w) ? chH / 2f : 2 * d, fill);
             float mx = x0 + 4 * d;
             if (ic != null) {
                 Icons.draw(c, ic, mx, b - chH + (chH - ls * 1.15f) / 2f, ls * 1.15f, s.color);
@@ -1416,8 +1430,13 @@ final class DashboardView extends View {
     private static final int[] GPAL = {0xFF73BF69, 0xFF5794F2, 0xFFFF9830, 0xFFF2CC0C, 0xFFB877D9, 0xFF8AB8FF};
 
     private final float[] fr = new float[2];
+    private boolean frInv = false;   // set by thFracs: the last thresholds are "low is bad" (battery)
     private final float[] px = new float[History.N];
     private final float[] py = new float[History.N];
+
+    private boolean rnd(Model.Widget w) {
+        return w.corners == 0 ? st.rounded : w.corners == 1;
+    }
 
     private boolean grafana(Model.Widget w) {
         return w.style == 0 ? st.panelStyle == 1 : w.style == 2;
@@ -1433,7 +1452,19 @@ final class DashboardView extends View {
 
     /** Warning / critical positions (0..1) inside the series range; false when there are no thresholds. */
     private boolean thFracs(Model.Series s, Sensors.Sensor sn, float[] out) {
+        frInv = false;
         if (!st.thEnabled || sn == null || sn.fan) return false;
+        if ("battery".equals(sn.thKey)) {
+            // low is bad: work in a flipped space (q = 1 - position) so base / warning / critical keep their order
+            double[] rb = range(s, sn);
+            double span = rb[1] - rb[0];
+            float crit = st.batCrit;
+            float warn = Math.max(st.batWarn, crit + 1);
+            out[0] = 1f - (float) Math.max(0, Math.min(1, (warn - rb[0]) / span));
+            out[1] = 1f - (float) Math.max(0, Math.min(1, (crit - rb[0]) / span));
+            frInv = true;
+            return true;
+        }
         int i = Model.thIndex(sn.thKey);
         if (i < 0) return false;
         double[] r = range(s, sn);
@@ -1448,6 +1479,7 @@ final class DashboardView extends View {
 
     /** Colour at position pos (0..1) along a bar: base, then warning, then critical. */
     private int gradColor(int base, boolean th, float[] f, float pos) {
+        if (th && frInv) pos = 1f - pos;
         if (!th) return lerp(lerp(base, Model.BLACK, 0.4), base, pos);
         float p1 = cl(f[0], 0.02f, 0.98f);
         float p2 = cl(f[1], p1 + 0.01f, 1f);
@@ -1462,6 +1494,10 @@ final class DashboardView extends View {
         }
         float p1 = cl(f[0], 0.02f, 0.98f);
         float p2 = cl(f[1], p1 + 0.01f, 1f);
+        if (frInv) {   // battery: the good (base) colour is at the full end
+            return new LinearGradient(x1, y1, x0, y0, new int[]{base, st.warnColor, st.critColor},
+                    new float[]{0f, p1, p2}, Shader.TileMode.CLAMP);
+        }
         return new LinearGradient(x0, y0, x1, y1, new int[]{base, st.warnColor, st.critColor},
                 new float[]{0f, p1, p2}, Shader.TileMode.CLAMP);
     }
@@ -1555,17 +1591,14 @@ final class DashboardView extends View {
             tmp.set(cx - rb, cy - rb, cx + rb, cy + rb);
             stroke.setStrokeWidth(bw);
             stroke.setStrokeCap(Paint.Cap.BUTT);
-            stroke.setColor(base);
-            if (f0 > 0.003f) c.drawArc(tmp, start, sweep * f0, false, stroke);
-            stroke.setColor(st.warnColor);
-            if (f1 - f0 > 0.003f) c.drawArc(tmp, start + sweep * f0, sweep * (f1 - f0), false, stroke);
-            stroke.setColor(st.critColor);
-            if (1 - f1 > 0.003f) c.drawArc(tmp, start + sweep * f1, sweep * (1 - f1), false, stroke);
+            bandArc(c, start, sweep, 0f, f0, base);
+            bandArc(c, start, sweep, f0, f1, st.warnColor);
+            bandArc(c, start, sweep, f1, 1f, st.critColor);
         }
         float rv = rad - (bands ? bw + dia * 0.03f : 0) - sw / 2f;
         if (rv < sw) return;
         tmp.set(cx - rv, cy - rv, cx + rv, cy + rv);
-        Paint.Cap cap = w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT;
+        Paint.Cap cap = rnd(w) ? Paint.Cap.ROUND : Paint.Cap.BUTT;
         stroke.setStrokeWidth(sw);
         stroke.setStrokeCap(cap);
         stroke.setColor(G_TRACK);
@@ -1606,6 +1639,14 @@ final class DashboardView extends View {
             float lsz = size(rad * 0.2f, rad * 0.24f, ts);
             drawText(c, lab, cx - rad * 0.3f, cx + rad * 0.3f, cy + rv * 0.82f, 1, lsz);
         }
+    }
+
+    /** One coloured piece of the threshold band (positions in the flipped space when frInv). */
+    private void bandArc(Canvas c, float start, float sweep, float qa, float qb, int color) {
+        if (qb - qa <= 0.003f) return;
+        float a0 = frInv ? start + sweep * (1f - qb) : start + sweep * qa;
+        stroke.setColor(color);
+        c.drawArc(tmp, a0, sweep * (qb - qa), false, stroke);
     }
 
     /** Axis number without clutter: no unit for percent and temperature. */
@@ -1701,7 +1742,7 @@ final class DashboardView extends View {
         float f = fraction(s, sn);
         float thick = vert ? x1 - x0 : y1 - y0;
         float len = vert ? y1 - y0 : x1 - x0;
-        float rad = w.rounded ? Math.min(3 * d, thick / 2f) : 0;
+        float rad = rnd(w) ? Math.min(3 * d, thick / 2f) : 0;
         fill.setStyle(Paint.Style.FILL);
 
         if (w.barStyle == 1) {
@@ -1710,7 +1751,7 @@ final class DashboardView extends View {
             float blk = (len - g * (cnt - 1)) / cnt;
             int lit = Math.round(f * cnt);
             if (lit == 0 && f > 0.002f) lit = 1;
-            float lr = w.rounded ? Math.min(1.5f * d, blk / 2f) : 0;
+            float lr = rnd(w) ? Math.min(1.5f * d, blk / 2f) : 0;
             for (int k = 0; k < cnt; k++) {
                 float off = k * (blk + g);
                 fill.setColor(k < lit ? gradColor(base, th, fr, (k + 0.5f) / cnt) : G_LCD_OFF);
@@ -1879,7 +1920,7 @@ final class DashboardView extends View {
             }
             stroke.setStrokeWidth(1.6f * d);
             stroke.setStrokeJoin(Paint.Join.ROUND);
-            stroke.setStrokeCap(w.rounded ? Paint.Cap.ROUND : Paint.Cap.BUTT);
+            stroke.setStrokeCap(rnd(w) ? Paint.Cap.ROUND : Paint.Cap.BUTT);
             stroke.setColor(col);
             c.drawPath(path, stroke);
             stroke.setStrokeCap(Paint.Cap.BUTT);

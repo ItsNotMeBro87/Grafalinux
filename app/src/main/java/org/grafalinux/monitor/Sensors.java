@@ -72,7 +72,7 @@ final class Sensors {
         int level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
         if (level >= 0 && scale > 0) {
-            t.add(cat, "phone.battery", "Battery level", Unit.PERCENT, 100.0 * level / scale, 100, null);
+            t.add(cat, "phone.battery", "Battery level", Unit.PERCENT, 100.0 * level / scale, 100, "battery");
         }
         int temp = b.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Integer.MIN_VALUE);
         if (temp != Integer.MIN_VALUE) {

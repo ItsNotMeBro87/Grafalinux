@@ -29,7 +29,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 API = 1
 
 
@@ -540,6 +540,10 @@ class Sampler(threading.Thread):
         self.lock = threading.Lock()
         self.latest = None
         self.info = None
+        self.stop_ev = threading.Event()
+
+    def stop(self):
+        self.stop_ev.set()
 
     def collect(self):
         now = time.time()
@@ -589,7 +593,7 @@ class Sampler(threading.Thread):
 
     def run(self):
         nxt = time.monotonic()
-        while True:
+        while not self.stop_ev.is_set():
             try:
                 snap = self.collect()
                 with self.lock:
@@ -600,7 +604,7 @@ class Sampler(threading.Thread):
             delay = nxt - time.monotonic()
             if delay < 0:
                 nxt, delay = time.monotonic(), 0
-            time.sleep(delay)
+            self.stop_ev.wait(delay)
 
     def get_latest(self):
         with self.lock:
@@ -625,7 +629,8 @@ setInterval(tick,1000);tick();
 </script></body></html>"""
 
 
-def make_handler(sampler, token, verbose):
+def make_handler(sampler, token, verbose, auth=None):
+    """auth: optional callable (supplied_token, client_ip) -> bool; replaces the single --token check."""
     class Handler(BaseHTTPRequestHandler):
         server_version = "linmon-agent/" + VERSION
         protocol_version = "HTTP/1.1"   # keep-alive: the phone reuses one connection
@@ -644,14 +649,16 @@ def make_handler(sampler, token, verbose):
             self.wfile.write(body)
 
         def _authorized(self, query):
-            if not token:
+            if auth is None and not token:
                 return True
             supplied = ""
-            auth = self.headers.get("Authorization", "")
-            if auth.startswith("Bearer "):
-                supplied = auth[7:]
+            header = self.headers.get("Authorization", "")
+            if header.startswith("Bearer "):
+                supplied = header[7:]
             elif "token" in query:
                 supplied = query["token"][0]
+            if auth is not None:
+                return bool(auth(supplied, self.client_address[0]))
             return hmac.compare_digest(supplied.encode(), token.encode())
 
         def do_GET(self):
@@ -675,6 +682,41 @@ def make_handler(sampler, token, verbose):
 
 
 # --------------------------------------------------------------------------
+DISCOVERY_PORT = 8788
+
+
+def discovery_loop(http_port, dport, stop=None):
+    """Answers the phone's "who is out there?" UDP broadcast with this host's name and port.
+
+    The token is never part of the answer: the user still has to enter it in the app.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", dport))
+    except OSError as e:
+        print("discovery disabled (UDP %d): %s" % (dport, e), flush=True)
+        return
+    reply = json.dumps({"app": "grafalinux", "name": socket.gethostname(),
+                        "port": http_port, "api": API}).encode()
+    sock.settimeout(1.0)
+    try:
+        while stop is None or not stop.is_set():
+            try:
+                data, addr = sock.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if data.startswith(b"GRAFALINUX?"):
+                try:
+                    sock.sendto(reply, addr)
+                except OSError:
+                    pass
+    finally:
+        sock.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description="linmon-agent: Linux system monitor agent")
     ap.add_argument("--bind", default=os.environ.get("LINMON_BIND", "0.0.0.0"))
@@ -683,6 +725,9 @@ def main():
                     help="seconds between samples (default 1.0)")
     ap.add_argument("--token", default=os.environ.get("LINMON_TOKEN", ""),
                     help="require this token (Authorization: Bearer or ?token=)")
+    ap.add_argument("--discovery-port", type=int,
+                    default=int(os.environ.get("LINMON_DISCOVERY_PORT", str(DISCOVERY_PORT))),
+                    help="UDP port that answers the app's network search (0 = off)")
     ap.add_argument("--once", action="store_true",
                     help="print one snapshot (plus host info) as JSON and exit")
     ap.add_argument("--verbose", action="store_true", help="log every HTTP request")
@@ -700,6 +745,9 @@ def main():
     if not args.token:
         print("WARNING: no --token set; anyone on your network can read these stats.", flush=True)
     sampler.start()
+    if args.discovery_port:
+        threading.Thread(target=discovery_loop, args=(args.port, args.discovery_port),
+                         daemon=True, name="discovery").start()
     server = ThreadingHTTPServer((args.bind, args.port), make_handler(sampler, args.token, args.verbose))
     print("linmon-agent %s listening on %s:%d (interval %.1fs)" %
           (VERSION, args.bind, args.port, sampler.interval), flush=True)

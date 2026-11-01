@@ -148,7 +148,23 @@ final class Ui {
     }
 
     static AlertDialog.Builder dialog(Context c) {
-        return new AlertDialog.Builder(c, android.R.style.Theme_Material_Dialog_Alert);
+        return new ScrollBuilder(c, android.R.style.Theme_Material_Dialog_Alert);
+    }
+
+    /** A dialog builder that always puts the content in a ScrollView, so nothing is cut off in landscape. */
+    private static final class ScrollBuilder extends AlertDialog.Builder {
+        ScrollBuilder(Context c, int theme) {
+            super(c, theme);
+        }
+
+        @Override
+        public AlertDialog.Builder setView(View v) {
+            if (v instanceof ScrollView) return super.setView(v);
+            ScrollView sv = new ScrollView(getContext());
+            sv.setFillViewport(false);
+            sv.addView(v, new ViewGroup.LayoutParams(MATCH, WRAP));
+            return super.setView(sv);
+        }
     }
 
     // ------------------------------------------------------------------
